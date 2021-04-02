@@ -3,6 +3,9 @@
 
 # In[39]:
 def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot):
+    """
+    combine cubic and cubicroot paths to use as testset
+    """
 
     path_combi = [[0,0,0,0,0,0,0,0,0,0,0]]
     red_combi = [0]

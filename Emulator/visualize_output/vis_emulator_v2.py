@@ -19,3 +19,5 @@ def emulator_v2_graphs(cubic_output, root_output):
         plt.plot(reds, red, label='cubic')
     
     plt.legend()
+    
+    
