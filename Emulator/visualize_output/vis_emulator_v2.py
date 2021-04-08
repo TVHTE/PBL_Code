@@ -5,6 +5,8 @@ Created on Fri Apr  2 09:46:57 2021
 @author: toonv
 """
 
+import matplotlib.pyplot as plt
+
 def emulator_v2_graphs(cubic_output, root_output):
     
     reds = [i for i in range(len(cubic_output))]

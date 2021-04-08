@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
 # In[39]:
 def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot):
@@ -47,35 +48,52 @@ class CtaxRedEmulator:
         self.df_combined_train = df_train
                 
         self.df_tot = pd.DataFrame()
+    
+    def get_ctax_sets(self, steps, stepsize_usd):
+        """
+        create ctax sets with steps is number of ctax points in path 
+        and stepsize_usd as the largeness of sets
+        """
         
-    def train_ctax_path(self):
+    def calc_delta_c(self, count_weights):
+        """
+        calculate delta_c with count_weights as number of weights
+        """
+        
+    def train_ctax_path(self, steps, stepsize_usd):
         """
         Here the weights for each ctax step is calculated
 
         Load values: linear paths and random paths including the reductions from TIMER
-        output is b values (weigths) for given ctax levels 
+        output: b values (weigths) for given ctax levels 
         """
+        self.steps = steps
+        self.stepsize_usd = stepsize_usd
         
         # find reduction levels for linear and training path at same ctax level @ all ctax levels        
-        for index in range(0, len(self.lin_path) - 10, 10):
+        for index in range(steps, len(self.lin_path) - steps, steps):
                     
             # ctax and reduction of train path @ index
-            ctax_val_train = self.train_path[index+10][-1].round()
+            ctax_val_train = self.train_path[index + steps][-1].round()
     
             # get the linear reduction corresponding to the ctax level of training input
             last_column = self.df_combined_lin.columns[-2]        
             cur_red_lin = self.df_combined_lin.loc[self.df_combined_lin[last_column] == ctax_val_train]         
             cur_red_lin = cur_red_lin['reduction'].values[0]
             
-            # use sets of 200 dollar differences to calculate weights 
-            cur_ctax = [i for i in range(index*20, index*20 + 220, 20)]
+            # use sets of 200 dollar differences to calculate weights
+            ctax_step = int(stepsize_usd / steps)
+            self.ctax_step = ctax_step
+            ctaxes = [i for i in range(index*ctax_step, index*ctax_step + (stepsize_usd + ctax_step), ctax_step)]
+            
+#            print(ctaxes, stepsize_usd+index*ctax_step)
             
             # create dataframe with cur_ctax as labels and list for linear reduction
             cur_train_paths = pd.DataFrame()
             cur_lin_paths = pd.DataFrame()
             cur_lin_reds = []
                         
-            for ctax in cur_ctax:
+            for ctax in ctaxes:
 
                 cur_ctax_path = self.df_combined_train.loc[self.df_combined_train[last_column] == ctax]
                 cur_train_paths = cur_train_paths.append(cur_ctax_path)    
@@ -84,53 +102,45 @@ class CtaxRedEmulator:
                 cur_lin_paths = cur_lin_paths.append(cur_ctax_path_lin)
                 
             # calculate delta_C for all training paths
-            lin_paths_no_red = cur_lin_paths.drop('reduction', axis=1)            
-            train_paths_no_red = cur_train_paths.drop('reduction', axis=1)
+            linear_pathways = cur_lin_paths.drop('reduction', axis=1)            
+            train_pathways = cur_train_paths.drop('reduction', axis=1)
                         
             # empty df for all delta_c
             delta_c = pd.DataFrame()   
             
             # calculate normalised delta C for every train path with corresponding lin path CHECK DIT
-            for i in range(len(lin_paths_no_red)):
+            for i in range(len(linear_pathways)):
                 
-#                print(train_paths_no_red.loc[i+index])
-                
-                delta_c = delta_c.append((lin_paths_no_red.loc[i+index] - train_paths_no_red.loc[i+index]) / 
-                                        lin_paths_no_red.loc[i+index][10])               
+                delta_c = delta_c.append((linear_pathways.loc[i+index] - train_pathways.loc[i+index]) / 
+                                        linear_pathways.loc[i+index][10])
+                    
+#            delta_c = ((linear_pathways[index:index+steps, :] – train_pathways[index:index+steps, :]) /
+#                       linear_pathways[index:index+steps][10])
                 
             # random reduction values for the paths
             cur_train_reds = cur_train_paths['reduction'].values
             
-            # take only the two averages of normalised delta_c HARD CODED
+            # take only the two averages of normalised delta_c e.g. split paths in half
             delta_c_avg = []
+            half = int(steps / 2)
 
             for delta_c in delta_c.values:
-                delta_c1 = sum(delta_c[0:4])/5
-                delta_c2 = sum(delta_c[5:])/6
+                delta_c1 = sum(delta_c[:half]) / half
+                delta_c2 = sum(delta_c[half:]) / half
                 delta_c_avg.append([delta_c1, delta_c2])
-            
-            # define objective function
-            def objective_delta_c_avg(x, delta_c_avg, cur_lin_reds, cur_train_reds):
-                """
-                Objective function that is used to find the weights 
-                """
-                calc_diff = sum(abs(cur_train_reds[i] - (cur_lin_reds[i] + x.dot(delta_c_avg[i]))) 
-                                for i in range(len(cur_train_reds))) 
-
-                return calc_diff
         
             # set initial values to 0
             x0 = [i*0 for i in delta_c_avg[0]]
             
             # minimize objective functions   
-            res = minimize(objective_delta_c_avg, x0, args=(delta_c_avg, cur_lin_reds, cur_train_reds),
+            res = minimize(self.objective_delta_c_avg, x0, args=(delta_c_avg, cur_lin_reds, cur_train_reds),
                           method='Nelder-Mead')
 
             # print results
 #             print(res)
     
             # save weights to ctax level
-            weights = pd.DataFrame([[res.x[0], res.x[1], 200 + (index*20)]], 
+            weights = pd.DataFrame([[res.x[0], res.x[1], stepsize_usd + (index*ctax_step)]], 
                                    columns=['b1','b2','ctax'])
             
             self.df_tot = pd.concat([self.df_tot, weights])            
@@ -151,6 +161,16 @@ class CtaxRedEmulator:
         fig, axs = plt.subplots(2, 1)
         axs[0].plot(self.df_tot['ctax'], self.df_tot['b1'], color='blue')
         axs[1].plot(self.df_tot['ctax'], self.df_tot['b2'], color='red')
+        
+    @staticmethod
+    def objective_delta_c_avg(x, delta_c_avg, cur_lin_reds, cur_train_reds):
+        """
+        Objective function that is used to find the weights 
+        """
+        calc_diff = sum(abs(cur_train_reds[i] - (cur_lin_reds[i] + x.dot(delta_c_avg[i]))) 
+                        for i in range(len(cur_train_reds))) 
+
+        return calc_diff
         
     def test_ctax_path(self, test_path):
         """
@@ -174,10 +194,11 @@ class CtaxRedEmulator:
         # calculate normalised delta C for test path
         delta_c = (lin_path_no_red - test_path) / lin_path_no_red[-1] 
 
-        # take only the two averages of normalised delta_c NOG HARD CODED
+        # take only the two averages of normalised delta_c 
         delta_c_avg = []
-        delta_c1 = sum(delta_c[0:4])/5
-        delta_c2 = sum(delta_c[5:])/6
+        half = int(self.steps / 2)
+        delta_c1 = sum(delta_c[:half]) / half
+        delta_c2 = sum(delta_c[half:]) / half
         delta_c_avg.append([delta_c1, delta_c2])
         
         # multiply delta C with the weights to find reduction      
@@ -195,6 +216,15 @@ class CtaxRedEmulator:
 #               '\n', 'reductions (lin, test, real): ', cur_lin_red, test_red, real_red)
         
         return (test_red, real_red)
+    
+    def train_ctax_multi_lin_reg(self, test_path):
+        """
+        Multivariate regression
+        
+        using sklearn
+        """
+        
+        
 
 if __name__ == "__main__": 
     
