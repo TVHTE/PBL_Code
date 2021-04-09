@@ -54,19 +54,6 @@ class CtaxRedEmulator:
         create ctax sets with steps is number of ctax points in path 
         and stepsize_usd as the largeness of sets
         """
-        
-    def calc_delta_c(self, count_weights):
-        """
-        calculate delta_c with count_weights as number of weights
-        """
-        
-    def train_ctax_path(self, steps, stepsize_usd):
-        """
-        Here the weights for each ctax step is calculated
-
-        Load values: linear paths and random paths including the reductions from TIMER
-        output: b values (weigths) for given ctax levels 
-        """
         self.steps = steps
         self.stepsize_usd = stepsize_usd
         
@@ -74,20 +61,18 @@ class CtaxRedEmulator:
         for index in range(steps, len(self.lin_path) - steps, steps):
                     
             # ctax and reduction of train path @ index
-            ctax_val_train = self.train_path[index + steps][-1].round()
+            ctax_val_train = self.train_path[index + steps][steps].round()
+            ctax_step = int(stepsize_usd / steps)
+            self.ctax_step = ctax_step
     
             # get the linear reduction corresponding to the ctax level of training input
-            last_column = self.df_combined_lin.columns[-2]        
+            last_column = self.df_combined_lin.columns[steps]        
             cur_red_lin = self.df_combined_lin.loc[self.df_combined_lin[last_column] == ctax_val_train]         
             cur_red_lin = cur_red_lin['reduction'].values[0]
             
             # use sets of 200 dollar differences to calculate weights
-            ctax_step = int(stepsize_usd / steps)
-            self.ctax_step = ctax_step
             ctaxes = [i for i in range(index*ctax_step, index*ctax_step + (stepsize_usd + ctax_step), ctax_step)]
-            
-#            print(ctaxes, stepsize_usd+index*ctax_step)
-            
+                        
             # create dataframe with cur_ctax as labels and list for linear reduction
             cur_train_paths = pd.DataFrame()
             cur_lin_paths = pd.DataFrame()
@@ -102,49 +87,65 @@ class CtaxRedEmulator:
                 cur_lin_paths = cur_lin_paths.append(cur_ctax_path_lin)
                 
             # calculate delta_C for all training paths
-            linear_pathways = cur_lin_paths.drop('reduction', axis=1)            
-            train_pathways = cur_train_paths.drop('reduction', axis=1)
-                        
-            # empty df for all delta_c
-            delta_c = pd.DataFrame()   
+            self.linear_pathways = cur_lin_paths.drop('reduction', axis=1)            
+            self.train_pathways = cur_train_paths.drop('reduction', axis=1)
             
-            # calculate normalised delta C for every train path with corresponding lin path CHECK DIT
-            for i in range(len(linear_pathways)):
+            print(self.linear_pathways)
+        
+    def calc_delta_c(self, count_weights):
+        """
+        calculate delta_c with count_weights as number of weights
+        """
+        # empty df for all delta_c
+        delta_c = pd.DataFrame() 
+        
+        # calculate normalised delta C for every train path with corresponding lin path CHECK DIT
+        for i in range(len(self.linear_pathways)):
+            
+            delta_c = delta_c.append((self.linear_pathways.loc[i+index] - self.train_pathways.loc[i+index]) / 
+                                    self.linear_pathways.loc[i+index][10])
                 
-                delta_c = delta_c.append((linear_pathways.loc[i+index] - train_pathways.loc[i+index]) / 
-                                        linear_pathways.loc[i+index][10])
-                    
 #            delta_c = ((linear_pathways[index:index+steps, :] – train_pathways[index:index+steps, :]) /
 #                       linear_pathways[index:index+steps][10])
-                
-            # random reduction values for the paths
-            cur_train_reds = cur_train_paths['reduction'].values
             
-            # take only the two averages of normalised delta_c e.g. split paths in half
-            delta_c_avg = []
-            half = int(steps / 2)
-
-            for delta_c in delta_c.values:
-                delta_c1 = sum(delta_c[:half]) / half
-                delta_c2 = sum(delta_c[half:]) / half
-                delta_c_avg.append([delta_c1, delta_c2])
+        # random reduction values for the paths
+        cur_train_reds = cur_train_paths['reduction'].values
         
-            # set initial values to 0
-            x0 = [i*0 for i in delta_c_avg[0]]
-            
-            # minimize objective functions   
-            res = minimize(self.objective_delta_c_avg, x0, args=(delta_c_avg, cur_lin_reds, cur_train_reds),
-                          method='Nelder-Mead')
+        # take only the two averages of normalised delta_c e.g. split paths in half
+        delta_c_avg = []
+        half = int(steps / 2)
 
-            # print results
-#             print(res)
-    
-            # save weights to ctax level
-            weights = pd.DataFrame([[res.x[0], res.x[1], stepsize_usd + (index*ctax_step)]], 
-                                   columns=['b1','b2','ctax'])
+        for delta_c in delta_c.values:
+            delta_c1 = sum(delta_c[:half]) / half
+            delta_c2 = sum(delta_c[half:]) / half
+            delta_c_avg.append([delta_c1, delta_c2])
             
-            self.df_tot = pd.concat([self.df_tot, weights])            
-            self.df_tot = self.df_tot.reset_index(drop=True)   
+        self.delta_c_avg = delta_c_avg
+        
+    def train_ctax_path(self, steps, stepsize_usd):
+        """
+        Here the weights for each ctax step is calculated
+
+        Load values: linear paths and random paths including the reductions from TIMER
+        output: b values (weigths) for given ctax levels 
+        """
+            
+        # set initial values to 0
+        x0 = [i*0 for i in self.delta_c[0]]
+        
+        # minimize objective functions   
+        res = minimize(self.objective_delta_c_avg, x0, args=(self.delta_c_avg, cur_lin_reds, cur_train_reds),
+                      method='Nelder-Mead')
+
+        # print results
+#             print(res)
+
+        # save weights to ctax level
+        weights = pd.DataFrame([[res.x[0], res.x[1], stepsize_usd + (index*self.ctax_step)]], 
+                               columns=['b1','b2','ctax'])
+        
+        self.df_tot = pd.concat([self.df_tot, weights])            
+        self.df_tot = self.df_tot.reset_index(drop=True)   
            
         # make df and add to self
         self.weights = self.df_tot
