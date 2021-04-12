@@ -5,6 +5,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
 
 # In[39]:
 def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot):
@@ -95,11 +100,12 @@ class CtaxRedEmulator:
         weights_columns = weights.columns.values
         weights_columns = weights_columns[:-1]
         
+        fig1, ax1 = plt.subplots()
         for column in weights_columns:
-            plt.plot(self.weights['ctax'], self.weights[column], label=column)
-        plt.xlabel('final ctax')
-        plt.ylabel('weight')
-        plt.legend()
+            ax1.plot(self.weights['ctax'], self.weights[column], label=column)
+        ax1.set_xlabel('final ctax')
+        ax1.set_ylabel('weight')
+        ax1.legend()
             
     @staticmethod
     def objective_delta_c_avg(x, delta_c_avg, cur_lin_reds, cur_train_reds):
@@ -144,14 +150,38 @@ class CtaxRedEmulator:
         
         return (test_red, real_red)
     
-    def train_ctax_multi_lin_reg(self, test_path):
+    def train_ctax_MLR(self):
         """
         Multivariate regression
         
         using sklearn
         """
+                
+        X = self.df_combined_train.drop(['reduction'], axis=1)
+        y = self.df_combined_train.reduction
         
-
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state=9)
+        
+        lin_reg_mod = LinearRegression()
+        
+        lin_reg_mod.fit(X_train, y_train)
+        
+        pred = lin_reg_mod.predict(X_test)
+        
+        test_set_rmse = (np.sqrt(mean_squared_error(y_test, pred)))
+        
+        test_set_r2 = r2_score(y_test, pred)
+        
+        print('RMSE: ', test_set_rmse)
+        print('R-squared: ', test_set_r2)
+        
+        fig2, ax2 = plt.subplots()
+        ax2.plot(pred, label='predicted')
+        ax2.plot(y_test.values, label='true value')
+        ax2.plot(pred-y_test.values, label='difference')
+        ax2.set_ylabel('reduction')
+        ax2.set_xlabel('test values')
+        ax2.legend()
 
 
 
