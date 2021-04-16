@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
 # In[39]:
 def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot):
@@ -116,6 +117,8 @@ class CtaxRedEmulator:
                 """
                 calc_diff = sum(abs(cur_train_reds[i] - (cur_lin_reds[i] + x.dot(delta_c_avg[i]))) 
                                 for i in range(len(cur_train_reds))) 
+
+                print(calc_diff)
 
                 return calc_diff
         

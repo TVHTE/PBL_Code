@@ -7,7 +7,7 @@ Created on Fri Apr  2 09:46:57 2021
 
 import matplotlib.pyplot as plt
 
-def emulator_v2_graphs(cubic_output, root_output):
+def emulator_v1_graphs(cubic_output, root_output):
     
     reds = [i for i in range(len(cubic_output))]
     

@@ -34,13 +34,11 @@ def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot)
 
     return df_combi
 
-"""
-This class will create a model which finds the reduction that comes with a certain 
-carbon price path. 
-"""
-
 class CtaxRedEmulator:
-    
+    """
+    This class will create a model which finds the reduction that comes with a certain 
+    carbon price path. 
+    """   
     def __init__(self, df_lin, df_train):
         
         self.lin_path = np.asarray(df_lin.drop(['reduction'], axis = 1))
@@ -54,43 +52,42 @@ class CtaxRedEmulator:
                 
         self.weights = pd.DataFrame()
         
-    def train_ctax_path(self, steps, stepsize_usd, number_of_weights):
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.train_path, self.train_reduction,
+                                                                                test_size = 0.2, random_state=9)
+                        
+    def train_ctax_path(self, stepsize, number_of_weights):
         """
         Here the weights for each ctax step is calculated
 
         Load values: linear paths and random paths including the reductions from TIMER
         output: b values (weigths) for given ctax levels 
         """
-        self.steps = steps
-        self.stepsize_usd = stepsize_usd
-        
+        self.steps = stepsize        
         delta_cs = self.lin_path - self.train_path
         final_ctax = self.lin_path[:, -1]
-        delta_c_norm = delta_cs / final_ctax[:, None]        
-        count_weights = int(steps/number_of_weights)
+        delta_c_norm = delta_cs / final_ctax[:, None]
+        count_weights = int(stepsize/number_of_weights)
         self.count_weights =  count_weights
-                                
-        for index in range(steps, len(delta_c_norm), steps):
+                          
+        print(delta_cs)
+        
+        for index in range(stepsize, len(delta_c_norm), stepsize):
                         
-            delta_c_step = delta_c_norm[index:index+steps, :]
-            delta_c_slice = []
-            
-            # get number of weights wanted, BESPREEK DIT
-            for delta_c in delta_c_step:
-                delta_c = delta_c[1:]
-                delta_c_slice.append(np.mean(delta_c.reshape(-1, count_weights), axis=1))
-                
-            lin_reduction_step = self.lin_reduction[index:index+steps]
-            train_reduction_step = self.train_reduction[index:index+steps]
-            
+            delta_c_step = delta_c_norm[index:index+stepsize, :]
+                        
+            # get number of weights wanted, BESPREEK DIT              
+            delta_c_slice = [np.mean(delta_c[1:].reshape(-1, count_weights), axis=1) for delta_c in delta_c_step]
+            lin_reduction_step = self.lin_reduction[index:index+stepsize]
+            train_reduction_step = self.train_reduction[index:index+stepsize]
+                        
             # set initial values to 0
             x0 = [i*0 for i in delta_c_slice[0]]
-                
-            res = minimize(self.objective_delta_c_avg, x0, args=(delta_c_slice, lin_reduction_step, train_reduction_step))
+                        
+            res = minimize(self.objective_delta_c_avg, x0, args=(delta_c_slice, lin_reduction_step, train_reduction_step), method = 'Nelder-Mead')
                         
             weights = pd.DataFrame([[x for x in res.x] + [index*20]])
             weights.columns = [*weights.columns[:-1], 'ctax']
-            
+                        
             self.weights = pd.concat([self.weights, weights])            
             self.weights = self.weights.reset_index(drop=True)
             
@@ -127,6 +124,30 @@ class CtaxRedEmulator:
         output: reduction test [int]  , reduction real [int]
         """
         
+        # for multiple test_paths at once
+#        lin_test_paths = []
+#        for path in self.X_test:
+#            lin_test_paths.append(self.lin_path[self.lin_path[:, -1] == path[-1]])
+#        
+#        lin_test_paths = np.asarray(lin_test_paths[0])        
+#        delta_cs = lin_test_paths - self.X_test 
+#        final_ctax = lin_test_paths[:, -1]
+#        delta_c_norm = delta_cs / final_ctax[:, None]
+#        delta_c_slice = [np.mean(delta_c_norm[1:].reshape(-1, self.count_weights), axis=1) for delta_c in delta_c_norm]
+#        
+##        print(delta_c_slice)
+#        
+#        # multiply delta C with the weights to find reduction      
+#        cur_weights = self.weights.iloc[(self.weights['ctax'] - final_ctax).abs().argsort()[:1]]
+#        
+##        print(cur_weights)
+#        
+#        b = cur_weights.drop('ctax', axis=1).values[0]   
+#        test_red = self.y_test - delta_c_slice @ b               
+        
+#        print(test_red)
+        
+        # for only one test_path
         test_path = test_path.drop(['reduction']).values
         
         # find corresponding ctax and weights for test path
@@ -150,38 +171,61 @@ class CtaxRedEmulator:
         
         return (test_red, real_red)
     
-    def train_ctax_MLR(self):
+    def emulate_ctax_MLR(self):
         """
-        Multivariate regression
+        Multivariate Linear Regression
         
         using sklearn
-        """
-                
-        X = self.df_combined_train.drop(['reduction'], axis=1)
-        y = self.df_combined_train.reduction
-        
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state=9)
-        
+        """    
         lin_reg_mod = LinearRegression()
         
-        lin_reg_mod.fit(X_train, y_train)
+        lin_reg_mod.fit(self.X_train, self.y_train)
         
-        pred = lin_reg_mod.predict(X_test)
+        pred = lin_reg_mod.predict(self.X_test)
         
-        test_set_rmse = (np.sqrt(mean_squared_error(y_test, pred)))
+        test_set_rmse = (np.sqrt(mean_squared_error(self.y_test, pred)))
         
-        test_set_r2 = r2_score(y_test, pred)
+        test_set_r2 = r2_score(self.y_test, pred)
         
         print('RMSE: ', test_set_rmse)
         print('R-squared: ', test_set_r2)
         
         fig2, ax2 = plt.subplots()
         ax2.plot(pred, label='predicted')
-        ax2.plot(y_test.values, label='true value')
-        ax2.plot(pred-y_test.values, label='difference')
+        ax2.plot(self.y_test.values, label='true value')
+        ax2.plot(pred-self.y_test.values, label='difference')
         ax2.set_ylabel('reduction')
         ax2.set_xlabel('test values')
         ax2.legend()
 
+    def emulate_ctax_LR(self):
+        """
+        Multivariate Logistic Regression
+        
+        using sklearn
+        """                    
+        polynomial_features= PolynomialFeatures(degree=2)
+        x_poly = polynomial_features.fit_transform(self.X_train)
+        
+        log_reg_mod = LinearRegression()
+        
+        log_reg_mod.fit(x_poly, self.y_train)
+        
+        pred = log_reg_mod.predict(self.X_test)
+        
+        test_set_rmse = (np.sqrt(mean_squared_error(self.y_test, pred)))
+        
+        test_set_r2 = r2_score(self.y_test, pred)
+        
+        print('RMSE: ', test_set_rmse)
+        print('R-squared: ', test_set_r2)
+        
+        fig3, ax3 = plt.subplots()
+        ax3.plot(pred, label='predicted')
+        ax3.plot(self.y_test.values, label='true value')
+        ax3.plot(pred-self.y_test.values, label='difference')
+        ax3.set_ylabel('reduction')
+        ax3.set_xlabel('test values')
+        ax3.legend()
 
 

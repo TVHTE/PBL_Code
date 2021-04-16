@@ -117,19 +117,6 @@ def find_path(df, step_columns, path):
     return df 
 
 
-# In[13]:
-
-if __name__ == "main":
-
-    reduction_lin = reduction_df(df_linear, 2040, 11)
-    reduction_cubic = reduction_df(df_cubic, 2040, 11)
-    reduction_cubicroot = reduction_df(df_cubicroot, 2040, 11)
-    
-    df_lin_path = find_path(reduction_lin, 1, 'linear')
-    
-    df_cubic_path = find_path(reduction_lin, 1, 'cubicroot')
-    
-    df_cubic_path.tail()
 
 
 
