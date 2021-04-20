@@ -41,7 +41,7 @@ def reduction_df(df, year, region):
     
     return df_cur
 
-def find_path(reductions, step_columns, path):
+def find_path(reductions, path, timerstep):
     """
     Calculate the ctax paths from the repsonse curve
 
@@ -71,18 +71,13 @@ def find_path(reductions, step_columns, path):
     #empty list for all paths    
     path = []
         
-    # make sure columns are same length as given step_columns    
-    steps = 10       
-    df_columns = []
-    
-    for i in range(0, steps, step_columns):                
-        df_columns.append(i)        
-        
-        if i == steps - step_columns:        
-            df_columns.append(steps)
+    # amount of columns is year - 2020 / 5 (5 year timesteps) 
+    count_columns = int((reductions.year - 2020) / timerstep)
+             
+    columns = [i*timerstep + 2020 for i in range(count_columns + 1)]
         
     for index in reductions.index.values:                     
-        num = len(df_columns)
+        num = len(columns)
         
         # calculate path (1,2 and 3 and append the paths to list)
         if num_path == 1:                          
@@ -90,7 +85,7 @@ def find_path(reductions, step_columns, path):
         
         if num_path == 2:
             # find a in y = ax^3              
-            a = (index/(steps**(3)))
+            a = (index/(count_columns**(3)))
             price_path = []
 
             for step in range(0, num):
@@ -101,7 +96,7 @@ def find_path(reductions, step_columns, path):
             
         if num_path == 3:                              
             # find a in y = ax^(1/3)                
-            a = (index/(steps**(1/3)))
+            a = (index/(count_columns**(1/3)))
             price_path = []
 
             for step in range(0, num):
@@ -112,10 +107,13 @@ def find_path(reductions, step_columns, path):
             path.append(price_path)       
                 
     # convert to pandas dataframe        
-    df_paths = pd.DataFrame(path, columns=df_columns)
+    df_paths = pd.DataFrame(path, columns=columns)
             
     # combine dataframes
     df = pd.concat([df_paths.reset_index(drop=True),reductions.reset_index(drop=True)], axis=1)   
+    
+    df.year = reductions.year
+    df.region = reductions.region
     
     return df 
 

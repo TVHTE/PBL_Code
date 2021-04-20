@@ -10,31 +10,6 @@ from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
-
-# In[39]:
-def combi_df(paths_cubic, paths_cubicroot, reduction_cubic, reduction_cubicroot):
-    """
-    combine cubic and cubicroot paths to use as testset
-    """
-
-    path_combi = [[0,0,0,0,0,0,0,0,0,0,0]]
-    red_combi = [0]
-    
-    for i in range(1, len(paths_cubic) - 1, 2):
-        path_combi.append(paths_cubic.loc[i].values)
-        path_combi.append(paths_cubicroot.loc[i+1].values)
-        red_combi.append(reduction_cubic.loc[i*20].values[0])
-        red_combi.append(reduction_cubicroot.loc[(i+1)*20].values[0])
-    
-    
-    df_combi = pd.DataFrame(path_combi, columns=paths_cubic.columns.values)
-    df_combi['reduction'] = red_combi
-
-    # for some reason last ctax values were not integers but floats like 1399.999998
-    df_combi = df_combi
-
-    return df_combi
-
 class CtaxRedEmulator:
     """
     This class will create a model which finds the reduction that comes with a certain 
@@ -49,13 +24,16 @@ class CtaxRedEmulator:
         self.train_reduction = np.asarray(df_train['reduction'])
 
         self.df_combined_lin = df_lin        
-        self.df_combined_train = df_train
+        self.df_combined_train = df_train.sort_values([df_train.year])
                 
         self.weights = pd.DataFrame()
         
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.train_path, self.train_reduction,
                                                                                 test_size = 0.1, random_state=9)
-                        
+        
+        self.year = df_train.year
+        self.region = df_train.region
+        
     def train_ctax_path(self, stepsize, number_of_weights):
         """
         Here the weights for each ctax step is calculated
@@ -64,21 +42,41 @@ class CtaxRedEmulator:
         output: b values (weigths) for given ctax levels 
         """
         self.stepsize = stepsize
-        self.number_of_weights = number_of_weights        
-        delta_cs = self.lin_path - self.train_path
-        final_ctax = self.lin_path[:, -1]
-        delta_c_norm = delta_cs / final_ctax[:, None]  # BESPREEK DIT
-        count_weights = int(stepsize/number_of_weights)
-        self.count_weights =  count_weights
-                        
+        self.number_of_weights = number_of_weights      
+        
+#        print(len(self.train_path))
+        
+        # get lin paths based on final ctax
+        self.lin_train = [self.lin_path[self.lin_path[:, -1] == path[-1]] for path in self.train_path]
+        self.lin_train = [path[0] for path in self.lin_train]
+        self.lin_train = np.vstack(self.lin_train)
+        self.lin_train = self.lin_train[self.lin_train[:, -1].argsort()]
+        self.train_path = self.train_path[self.train_path[:, -1].argsort()]
+                
+        delta_cs = self.lin_train - self.train_path
+        final_ctax = self.lin_train[:, -1]
+        delta_c_norm = delta_cs / final_ctax[:, None]
+        delta_c_dict = [{'delta_c': delta_c_norm[i], 'final ctax': final_ctax[i]} for i in range(len(delta_c_norm))]
+        
+#        print([ctax for ctax in delta_c_dict['delta_c']])
+                                            
         for index in range(stepsize, len(delta_c_norm), stepsize):
                         
-            delta_c_step = delta_c_norm[index:index+stepsize, :]
+#            delta_c_step = delta_c_norm[index:index+stepsize_ctax, :]
+            stepsize_ctax = index * 20
+            
+            print(index, stepsize_ctax)
+            
+            delta_c_step = [ctax['delta_c'] for ctax in delta_c_dict if ctax['final ctax'] <= stepsize_ctax and ctax['final ctax'] >= stepsize_ctax - 200 ] 
+            delta_c_step = np.vstack(delta_c_step)
+            print(len(delta_c_step))
                         
             # get number of weights wanted, BESPREEK DIT              
-            delta_c_slice = [np.mean(delta_c[1:].reshape(-1, count_weights), axis=1) for delta_c in delta_c_step]
+            delta_c_slice = [np.mean(delta_c[1:].reshape(-1, number_of_weights), axis=1) for delta_c in delta_c_step]
             lin_reduction_step = self.lin_reduction[index:index+stepsize]
             train_reduction_step = self.train_reduction[index:index+stepsize]
+            
+            print(train_reduction_step)
                                              
             # set initial values to 0
             x0 = [i*0 for i in delta_c_slice[0]]
@@ -128,40 +126,43 @@ class CtaxRedEmulator:
         delta_cs = lin_test_paths - self.X_test 
         final_ctax = lin_test_paths[:, -1]
         delta_c_norm = delta_cs / final_ctax[:, None]
-        delta_c_slice = [np.mean(delta_c[1:].reshape(-1,  self.count_weights), axis=1) for delta_c in delta_c_norm[0]]
+        delta_c_slice = [np.mean(delta_c[1:].reshape(-1,  self.number_of_weights), axis=1) for delta_c in delta_c_norm[0]]
                 
         # multiply delta C with the weights to find reduction              
         cur_weights = [self.weights.iloc[(self.weights['ctax'] - ctax).abs().argsort()[:1].values] for ctax in self.X_test[:, -1]]
         clean_weights = [weights.values[0] for weights in cur_weights]
-        weights_df = pd.DataFrame(clean_weights)          
-        
-        print(weights_df)
-        
-        b = weights_df.drop([2], axis=1).values   
+        weights_columns = [column for column in range(self.number_of_weights)]
+        weights_columns.append('ctax')
+        weights_df = pd.DataFrame(clean_weights, columns=weights_columns)          
+                
+        b = weights_df.drop(['ctax'], axis=1).values   
 #        test_red = self.y_test - (delta_c_slice @ b)
         
         # calculate the reduction
         test_red = [self.y_test[i] - (delta_c_slice[i] @ b[i]) for i in range(len(self.y_test))]                        
         test_red = pd.DataFrame(test_red, columns=['test reduction'])
-        real_red = pd.DataFrame()
-        real_red['real reduction'] = self.df_combined_train.loc[self.df_combined_train[self.stepsize].isin(self.X_test[:, -1])]['reduction'].reset_index(drop=True)
-        real_red['final ctax'] = self.df_combined_train.loc[self.df_combined_train[self.stepsize].isin(self.X_test[:, -1])][self.stepsize].reset_index(drop=True)
-        
         test_red['final ctax'] = self.X_test[:, -1]
         test_red = test_red.sort_values(by=['final ctax'])
-        test_red = test_red.reset_index(drop=True)   
+        test_red = test_red.reset_index(drop=True)
+        real_red = pd.DataFrame()
+        
+        real_red['real reduction'] = self.df_combined_train.loc[self.df_combined_train[self.year].isin(self.X_test[:, -1])]['reduction'].reset_index(drop=True)
+        real_red['final ctax'] = self.df_combined_train.loc[self.df_combined_train[self.year].isin(self.X_test[:, -1])][self.year].reset_index(drop=True)
+    
         final_tested_reduction = real_red.merge(test_red)
         
         print(final_tested_reduction)
         
-#        print(final_tested_reduction)
-    
+        final_tested_reduction.plot(y=['real reduction', 'test reduction'])
+        
+        return final_tested_reduction
+                    
     def test_ctax_1by1(self, test_path):
         # for only one test_path
         test_path = test_path.drop(['reduction']).values
         
         # find corresponding ctax and weights for test path
-        cur_ctax = test_path[10]        
+        cur_ctax = test_path[-1]        
         ctax_column = self.df_combined_lin.columns[-2]       
         cur_lin_path = self.df_combined_lin.loc[self.df_combined_lin[ctax_column] == cur_ctax]
         lin_path_no_red = cur_lin_path.drop('reduction', axis=1).values[0]               
@@ -171,7 +172,7 @@ class CtaxRedEmulator:
         delta_c = (lin_path_no_red - test_path) / lin_path_no_red[-1] 
         delta_c = delta_c[1:]  # BESPREEK DIT
                 
-        delta_c_slice = np.mean(delta_c.reshape(-1, self.count_weights), axis=1)
+        delta_c_slice = np.mean(delta_c.reshape(-1, self.number_of_weights), axis=1)
                 
         # multiply delta C with the weights to find reduction      
         cur_weights = self.weights.iloc[(self.weights['ctax'] - cur_ctax).abs().argsort()[:1]]      
