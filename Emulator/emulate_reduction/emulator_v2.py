@@ -153,31 +153,6 @@ class CtaxRedEmulator:
         final_tested_reduction.plot(y=['real reduction', 'test reduction'])
         
         return final_tested_reduction
-                    
-    def test_ctax_1by1(self, test_path):
-        # for only one test_path
-        test_path = test_path.drop(['reduction']).values
-        
-        # find corresponding ctax and weights for test path
-        cur_ctax = test_path[-1]        
-        ctax_column = self.df_combined_lin.columns[-2]       
-        cur_lin_path = self.df_combined_lin.loc[self.df_combined_lin[ctax_column] == cur_ctax]
-        lin_path_no_red = cur_lin_path.drop('reduction', axis=1).values[0]               
-        cur_lin_red = cur_lin_path['reduction'].values
-        
-        # calculate normalised delta C for test path
-        delta_c = (lin_path_no_red - test_path) / lin_path_no_red[-1] 
-        delta_c = delta_c[1:]  # BESPREEK DIT
-                
-        delta_c_slice = np.mean(delta_c.reshape(-1, self.number_of_weights), axis=1)
-                
-        # multiply delta C with the weights to find reduction      
-        cur_weights = self.weights.iloc[(self.weights['ctax'] - cur_ctax).abs().argsort()[:1]]      
-        b = cur_weights.drop('ctax', axis=1).values[0]   
-        test_red = cur_lin_red - delta_c_slice @ b               
-        real_red = self.df_combined_train.loc[self.df_combined_train[ctax_column] == cur_ctax]['reduction'].values[0]
-                
-        return (test_red[0], real_red)
     
     def train_ctax_MLR(self):
         """
@@ -193,14 +168,14 @@ class CtaxRedEmulator:
         
         return pred
 
-    def train_ctax_LR(self):
+    def train_ctax_LR(self, degree):
         """
         Multivariate Logistic Regression
         
         using sklearn
         """                    
-        polynomial_features= PolynomialFeatures(degree=2)
-        x_poly = polynomial_features.fit_transform(self.X_train)
+        poly = PolynomialFeatures(degree=degree)
+        x_poly = poly.fit_transform(self.X_train)
         
         log_reg_mod = LinearRegression()
         
@@ -219,17 +194,20 @@ class CtaxRedEmulator:
         """
         Method to test the multivariate regressions
         """
-        test_set_rmse = (np.sqrt(mean_squared_error(self.y_test, pred)))
+        sorted_y_test = np.sort(self.y_test)         
+        sorted_pred = np.sort(pred)
+                
+        test_set_rmse = (np.sqrt(mean_squared_error(sorted_y_test, sorted_pred)))
         
-        test_set_r2 = r2_score(self.y_test, pred)
+        test_set_r2 = r2_score(sorted_y_test, sorted_pred)
         
         print('RMSE: ', test_set_rmse)
         print('R-squared: ', test_set_r2)
         
         fig, ax = plt.subplots()
-        ax.plot(pred, label='predicted')
-        ax.plot(self.y_test, label='true value')
-        ax.plot(pred-self.y_test, label='difference')
+        ax.plot(sorted_pred, label='predicted')
+        ax.plot(sorted_y_test, label='true value')
+        ax.plot(sorted_pred - sorted_y_test, label='difference')
         ax.set_ylabel('reduction')
         ax.set_xlabel('test values')
         ax.legend()
