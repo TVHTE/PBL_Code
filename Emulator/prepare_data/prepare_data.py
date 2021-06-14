@@ -10,7 +10,39 @@ import numpy as np
 from pym import pym
 import os
 
-class IAMC:
+def combine_azure_ctax(year, region, ctax_paths, reductions):
+    """
+    combine azure reduction output with ctax paths input
+    based on year and region
+    """
+    
+    if year != 2100:
+        year = year + 1
+    
+    reduction_indices = reductions.loc[reductions.region == region][year].index
+    cur_reduction = reductions.loc[reduction_indices][year]
+    baseline_reduction = reductions.loc[0][year]
+    percentage_reduction = (((cur_reduction - baseline_reduction) * -1) / baseline_reduction) * 100
+    cur_reduction = percentage_reduction
+    ctax_index = reductions.loc[reduction_indices]['ctax_index']
+    
+    combined = pd.DataFrame()
+    combined['ctax_index'] = ctax_index
+    combined['reduction'] = cur_reduction
+    
+    ctax_paths.index.name = 'ctax_index'    
+    cur_ctax_df = pd.merge(ctax_paths, combined, on=['ctax_index'])
+    
+    data_for_emulator = cur_ctax_df.drop(columns=['ctax_index', 'type'])
+    columns = data_for_emulator.columns
+    columns = [column for column in columns[:-1] if int(column) <= year]
+    columns.append('reduction')
+    
+    data_for_emulator = data_for_emulator[data_for_emulator.columns.intersection(columns)]
+    
+    return data_for_emulator
+    
+class prepare_data:
     
     def __init__(self, database):
     

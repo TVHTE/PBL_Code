@@ -76,7 +76,7 @@ def find_path(reductions, path, timerstep):
              
     columns = [i*timerstep + 2020 for i in range(count_columns + 1)]
         
-    for index in reductions.index.values:                     
+    for index in reductions.index.values:
         num = len(columns)
         
         # calculate path (1,2 and 3 and append the paths to list)

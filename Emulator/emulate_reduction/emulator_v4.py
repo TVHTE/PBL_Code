@@ -13,6 +13,9 @@ from sklearn.linear_model import Ridge
 from sklearn.linear_model import Lasso
 from sklearn import tree
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from sklearn.neural_network import MLPRegressor
+from sklearn.model_selection import GridSearchCV
 
 #import graphviz 
 
@@ -250,7 +253,7 @@ class CtaxRedEmulator:
         
         clf.fit(self.X_train, self.y_train)
         
-        tree.plot_tree(clf)
+#        tree.plot_tree(clf)
         
 #        dot_data = tree.export_graphviz(clf, out_file=None)
 #        graph = graphviz.Source(dot_data)
@@ -267,14 +270,52 @@ class CtaxRedEmulator:
         
         # bootstrap methods, dataset opsplitsen zodat je ook test met je testsets
         self.method = 'regression forest'
+                
+        parameters = { 
+                'n_estimators': [100, 200, 300],
+                'max_features': ['auto', 'sqrt', 'log2']
+                }   
         
-        clf = RandomForestRegressor(random_state=0, max_depth=max_depth)
+        grid = GridSearchCV(RandomForestRegressor(), parameters, cv=5, verbose=1)
         
-        clf.fit(self.X_train, self.y_train)
+        grid.fit(self.X_train, self.y_train)
+        print('best params: ', grid.best_params_)
+
+        pred = grid.predict(self.X_test) 
+                
+        return pred
+    
+    def train_SVM(self):
+        """
+        Support Vector Machine Regression
+        """
+        self.method = 'SVM'
         
-        pred = clf.predict(self.X_test) 
+        parameters = {
+            "kernel": ["rbf"],
+            "C": [1,10,10,100,1000],
+            "gamma": [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
+            }
         
-        clf.decision_path(self.X_train)
+        grid = GridSearchCV(SVR(), parameters, cv=5, verbose=1)
+        grid.fit(self.X_train, self.y_train)
+        print('best params: ', grid.best_params_)
+        pred = grid.predict(self.X_test)
+        
+        return pred
+    
+    def train_MLPRegressor(self):
+        
+        self.method = 'MLPRegressor'
+        
+        parameters = {"hidden_layer_sizes": [(1,),(50,),(100,)],
+                                             "alpha": [0.00005,0.0005],
+                                             "max_iter":[5000]}
+
+        grid = GridSearchCV(MLPRegressor(), parameters, cv=3, verbose=1)
+        grid.fit(self.X_train, self.y_train)
+        print('best params: ', grid.best_params_)
+        pred = grid.predict(self.X_test)
         
         return pred
     
