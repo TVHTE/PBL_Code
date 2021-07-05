@@ -17,6 +17,12 @@ from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import GridSearchCV
 
+# TensorFlow
+import tensorflow as tf
+
+from tensorflow import keras
+from tensorflow.keras import layers
+
 #import graphviz 
 
 class CtaxRedEmulator:
@@ -33,7 +39,7 @@ class CtaxRedEmulator:
         self.train_reduction = np.asarray(df_train['reduction'])
 
         self.df_combined_lin = df_lin        
-#        self.df_combined_train = df_train.sort_values([df_train.year])
+        self.df_combined_train = df_train.sort_values([df_train.year])
                 
         self.weights = pd.DataFrame()
         
@@ -68,6 +74,8 @@ class CtaxRedEmulator:
         self.lin_train = np.vstack(self.lin_train)
         self.lin_train = self.lin_train[self.lin_train[:, -1].argsort()]
         self.train_path = self.train_path[self.train_path[:, -1].argsort()]
+        
+        print(self.lin_train)
                         
         delta_cs = self.lin_train - self.train_path
         final_ctax = self.lin_train[:, -1]
@@ -259,6 +267,7 @@ class CtaxRedEmulator:
 #        graph = graphviz.Source(dot_data)
 #        graph.render('ctax')
         
+        
         pred = clf.predict(self.X_test)
         
         return pred
@@ -276,7 +285,7 @@ class CtaxRedEmulator:
                 'max_features': ['auto', 'sqrt', 'log2']
                 }   
         
-        grid = GridSearchCV(RandomForestRegressor(), parameters, cv=5, verbose=1)
+        grid = GridSearchCV(RandomForestRegressor(), parameters, cv=5, verbose=1, n_jobs=-1)
         
         grid.fit(self.X_train, self.y_train)
         print('best params: ', grid.best_params_)
@@ -293,11 +302,11 @@ class CtaxRedEmulator:
         
         parameters = {
             "kernel": ["rbf"],
-            "C": [1,10,10,100,1000],
-            "gamma": [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
+            "C": [10, 100, 1000],
+            "gamma": [1e-6, 1e-5, 1e-4]
             }
         
-        grid = GridSearchCV(SVR(), parameters, cv=5, verbose=1)
+        grid = GridSearchCV(SVR(), parameters, cv=5, verbose=1, n_jobs=-1)
         grid.fit(self.X_train, self.y_train)
         print('best params: ', grid.best_params_)
         pred = grid.predict(self.X_test)
@@ -308,16 +317,37 @@ class CtaxRedEmulator:
         
         self.method = 'MLPRegressor'
         
-        parameters = {"hidden_layer_sizes": [(1,),(50,),(100,)],
+        parameters = {"hidden_layer_sizes": [(50,),(100,),(500,)],
                                              "alpha": [0.00005,0.0005],
-                                             "max_iter":[5000]}
+                                             "max_iter":[10000]}
+#                                             "solver":['lbfgs']}
 
-        grid = GridSearchCV(MLPRegressor(), parameters, cv=3, verbose=1)
+        grid = GridSearchCV(MLPRegressor(), parameters, cv=3, verbose=1, n_jobs=-1)
         grid.fit(self.X_train, self.y_train)
         print('best params: ', grid.best_params_)
         pred = grid.predict(self.X_test)
         
         return pred
+    
+    def train_TF(self):
+        
+        self.method = 'TensorFlow'
+        
+        print(self.X_train)
+        
+        model = keras.Sequential([
+                self.X_train,
+                layers.Dense(64, activation='relu'),
+                layers.Dense(64, activation='relu'),
+                layers.Dense(1)
+        ])
+                
+        model.summary()
+                
+        model.compile(loss='mean_absolute_error',
+                      optimizer=tf.keras.optimizers.Adam(0.001))
+        
+        history = model.fit(self.X_train)
     
     def test_regr(self, pred):
         """

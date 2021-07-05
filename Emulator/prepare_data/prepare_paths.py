@@ -7,40 +7,136 @@ Created on Tue May  4 13:41:38 2021
 
 import pandas as pd
 import numpy as np
-from pym import pym
+import matplotlib.pyplot as plt
 import os
+import matplotlib.colors as colors
 
-def combine_azure_ctax(year, region, ctax_paths, reductions):
+
+from pym import pym
+
+def combine_azure_ctax(year, region, ctax_paths, emissions, baseline):
     """
     combine azure reduction output with ctax paths input
     based on year and region
     """
-    
+        
     if year != 2100:
         year = year + 1
-    
-    reduction_indices = reductions.loc[reductions.region == region][year].index
-    cur_reduction = reductions.loc[reduction_indices][year]
-    baseline_reduction = reductions.loc[0][year]
-    percentage_reduction = (((cur_reduction - baseline_reduction) * -1) / baseline_reduction) * 100
-    cur_reduction = percentage_reduction
-    ctax_index = reductions.loc[reduction_indices]['ctax_index']
+                        
+    abs_emission = np.array(emissions.loc[emissions.region == region][year].values).astype(float)
+    baseline = float(baseline.loc[baseline.region == region][year].values)
+        
+    reduction = ((abs_emission - baseline) / baseline) * -100    
+    ctax_index = emissions.loc[emissions.region == region]['ctax_index']
     
     combined = pd.DataFrame()
     combined['ctax_index'] = ctax_index
-    combined['reduction'] = cur_reduction
+    combined['reduction'] = reduction
     
     ctax_paths.index.name = 'ctax_index'    
     cur_ctax_df = pd.merge(ctax_paths, combined, on=['ctax_index'])
     
-    data_for_emulator = cur_ctax_df.drop(columns=['ctax_index', 'type'])
-    columns = data_for_emulator.columns
+    emulator_data = cur_ctax_df.drop(columns=['ctax_index', 'type'], errors='ignore')
+    columns = emulator_data.columns
     columns = [column for column in columns[:-1] if int(column) <= year]
     columns.append('reduction')
     
-    data_for_emulator = data_for_emulator[data_for_emulator.columns.intersection(columns)]
+    emulator_data = emulator_data[emulator_data.columns.intersection(columns)]
+            
+    if year != 2100:
+        emulator_data.year = year - 1
+    else:
+        emulator_data.year = year
     
-    return data_for_emulator
+    emulator_data.region = region
+    
+    return emulator_data
+
+def world_MAC_data(year, ctax_paths, emissions, world_baseline):
+    """
+    combine azure reduction output with ctax paths input
+    based on year and region
+    """
+        
+    world_emissions = np.array([emissions.loc[emissions.ctax_index == i][year].sum() for i in emissions.ctax_index.unique()])
+        
+    world_reduction = ((world_emissions - world_baseline) / world_baseline) * -100
+            
+    ctax_index = [ctax for ctax in range(11)]
+    combined_world = pd.DataFrame()
+    combined_world['ctax_index'] = ctax_index
+    combined_world['reduction'] = world_reduction
+        
+    costs = np.trapz(ctax_paths[str(year)].values, x=world_emissions) * -0.001
+    print('costs: ', '{:e}'.format(costs))
+    
+    ctax_paths.index.name = 'ctax_index'    
+    ctax_world = pd.merge(ctax_paths, combined_world, on=['ctax_index'])
+    ctax_world = ctax_world.drop(['ctax_index'], axis=1)    
+
+    if year != 2100:
+        ctax_world.year = year - 1
+    else:
+        ctax_world.year = year    
+    
+    ctax_world.region = 27
+    
+    return ctax_world
+
+def output_costs_timer(t_system_cost, t_system_cost_rel, year, region, ctax_paths, baseline):
+    """
+    overview of costs output variables from TIMER
+    """
+    
+    costs_dfs = [t_system_cost, t_system_cost_rel]
+    
+    world_costs = t_system_cost.loc[t_system_cost.region == region][str(year)]
+    
+#    print(t_system_cost.loc[t_system_cost.region == region][str(year)], baseline.loc[baseline.ctax_index == 0][str(year)])
+    
+    compared_to_baseline = np.array(world_costs) - np.array(baseline.loc[baseline.ctax_index == 0][str(year)])
+        
+    variables_combined = pd.DataFrame()
+         
+    for index, costs in enumerate(costs_dfs):
+        world_costs = costs.loc[costs.region == region][str(year)].values
+        variables_combined[index] = world_costs
+                
+    variables_combined.columns = ['t_system_cost [USD]', 't_system_cost_rel [% of GDP]']
+    end_ctax = ctax_paths[str(year)].values
+    variables_combined['final_c_price'] = end_ctax
+    variables_combined['mitigation costs [USD]'] = compared_to_baseline
+    variables_combined = variables_combined.set_index('final_c_price')
+    variables_combined = variables_combined.round(3)
+    
+    return variables_combined
+
+def plot_MAC(emulator_data, label, colormap=None):
+    """
+    plot MAC curves
+    """
+    year = emulator_data.year
+        
+    price = emulator_data[str(year)]
+        
+    reduction = emulator_data.reduction
+    
+    cmap = plt.get_cmap(colormap)
+    new_cmap = truncate_colormap(cmap, 0.4, 0.8)
+    
+    plt.plot(reduction, price, label=label)
+    plt.grid(True)
+    plt.scatter(reduction, price, c=reduction, cmap=new_cmap, zorder=10)
+    plt.xlabel('reduction [%]')
+    plt.ylabel('ctax (final value) [USD/tCO2]')
+    plt.legend()
+    plt.title(f'MAC curve for region {emulator_data.region} in {emulator_data.year}')
+    
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    new_cmap = colors.LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap 
     
 class prepare_data:
     
@@ -107,20 +203,35 @@ class prepare_data:
                 
         return self.scaled_ctax_paths
         
-    def get_linear(self, max_ctax):
+    def get_linear(self, max_ctax, step_ctax):
         """
         get the linear paths that come with the final ctaxes of the scaled ctax paths
         """
         path = []
         num = len(self.years)
-        lin_ctaxes = range(0, max_ctax + 40, 40)
+        lin_ctaxes = range(0, max_ctax + step_ctax, step_ctax)
         
         for ctax in lin_ctaxes:
             path.append(np.linspace(0, ctax, num=num))
-        
+                    
         self.lin_ctax_paths = pd.DataFrame(path, columns=self.years)
                 
         return self.lin_ctax_paths
+    
+    def get_tree_costs(self, max_ctax, step_ctax):
+        
+        tree_paths = []
+        num = len(self.years)
+        ctaxes = range(0, max_ctax + step_ctax, step_ctax)
+        
+        for ctax in ctaxes:
+            lin_ctax = np.linspace(0, max_ctax, num=num)
+            lin_ctax[-1] = ctax    
+            tree_paths.append(lin_ctax)
+        
+        self.tree_paths = pd.DataFrame(tree_paths, columns=self.years)
+                        
+        return self.tree_paths
     
     def get_cubic(self, max_ctax):
         """
@@ -287,6 +398,8 @@ class prepare_data:
         df_zeros.loc[27] = zeros 
         variable_name = 'main.em.EXOCarbonTax'
         
+#        ctax_paths.to_csv(path_or_buf = path_csv + 'tree_pahts.csv')
+        
         for index in unique_indices:
             cur_df = self.mym_ctaxes[self.mym_ctaxes.index == index].reset_index(drop=True)
             cur_df = pd.concat([cur_df.iloc[:26], df_zeros, cur_df.iloc[26:]]).reset_index(drop=True)
@@ -304,10 +417,17 @@ class prepare_data:
                 in_file.write('DIRECTORY("../scenlib/$1/ctaxinput"); \n')
                 in_file.write(f'FILE("{filename}{index}.dat", "r")         = main.em.EXOCarbonTax;') # TOON CHECK DIT
         
-    def plot_ctax_paths(self, ctax_paths):
+    def plot_ctax_paths(self, ctax_paths, colormap):
         
+        cmap = plt.get_cmap(colormap)
+        new_cmap = truncate_colormap(cmap, 0.4, 1)        
+                
         plot_prices = ctax_paths[self.years]  
-        plot_prices.T.plot(legend=False)
+        plot_prices.T.plot(legend=False, colormap=new_cmap, grid=True, xlabel='year' , ylabel='ctax (final value) [USD/tCO2]')
+        
+
+  
+        
         
 
                 
