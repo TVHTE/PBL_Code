@@ -25,8 +25,8 @@ def combine_azure_ctax(year, region, ctax_paths, emissions, baseline):
                         
     abs_emission = np.array(emissions.loc[emissions.region == region][year].values).astype(float)
     baseline = float(baseline.loc[baseline.region == region][year].values)
-        
-    reduction = ((abs_emission - baseline) / baseline) * -100    
+            
+    reduction = 100 - (abs_emission / baseline) * 100
     ctax_index = emissions.loc[emissions.region == region]['ctax_index']
     
     combined = pd.DataFrame()
@@ -40,7 +40,7 @@ def combine_azure_ctax(year, region, ctax_paths, emissions, baseline):
     columns = emulator_data.columns
     columns = [column for column in columns[:-1] if int(column) <= year]
     columns.append('reduction')
-    
+        
     emulator_data = emulator_data[emulator_data.columns.intersection(columns)]
             
     if year != 2100:
@@ -60,14 +60,14 @@ def world_MAC_data(year, ctax_paths, emissions, world_baseline):
         
     world_emissions = np.array([emissions.loc[emissions.ctax_index == i][year].sum() for i in emissions.ctax_index.unique()])
         
-    world_reduction = ((world_emissions - world_baseline) / world_baseline) * -100
+    world_reduction = (world_emissions / world_baseline) * 100
             
     ctax_index = [ctax for ctax in range(11)]
     combined_world = pd.DataFrame()
     combined_world['ctax_index'] = ctax_index
     combined_world['reduction'] = world_reduction
         
-    costs = np.trapz(ctax_paths[str(year)].values, x=world_emissions) * -0.001
+    costs = np.trapz(ctax_paths[str(year)].values, x=world_emissions) * -0.001 # 0.001 is for kg to tonnes
     print('costs: ', '{:e}'.format(costs))
     
     ctax_paths.index.name = 'ctax_index'    
@@ -183,8 +183,7 @@ class prepare_data:
     def scale_ctax(self, step_ctax):
         """
         normalise the ctax paths and scale them accordingly until max ctax
-        """
-        
+        """  
         self.final_ctax = self.values_only.max(axis=1).values
         norm_ctax = self.values_only.values / self.final_ctax[:, None]
         ctaxes_for_scale = [i for i in range(step_ctax, self.max_ctax + step_ctax, step_ctax)]
@@ -200,6 +199,8 @@ class prepare_data:
         scaled_ctaxes = scaled_ctaxes[~mask]
         self.scaled_ctax_paths = pd.DataFrame(scaled_ctaxes, columns=self.years)
         self.scaled_ctax_paths = self.scaled_ctax_paths.drop_duplicates()
+
+        self.scaled_ctax_paths.method = 'scaled IAMC'        
                 
         return self.scaled_ctax_paths
         
@@ -215,7 +216,9 @@ class prepare_data:
             path.append(np.linspace(0, ctax, num=num))
                     
         self.lin_ctax_paths = pd.DataFrame(path, columns=self.years)
-                
+        
+        self.lin_ctax_paths.method = 'linear'
+        
         return self.lin_ctax_paths
     
     def get_tree_costs(self, max_ctax, step_ctax):
@@ -251,6 +254,8 @@ class prepare_data:
                 
             paths.append(path)
         self.cubic_paths = pd.DataFrame(paths, columns=self.years)
+        
+        self.cubic_paths.method = 'cubic'
                 
         return self.cubic_paths
     
@@ -273,7 +278,9 @@ class prepare_data:
             paths.append(path)
                 
         self.cubicroot_paths = pd.DataFrame(paths, columns=self.years)
-                
+         
+        self.cubicroot_paths.method = 'cubicroot'
+        
         return self.cubicroot_paths
     
     def sparse_cubicroot(self, max_ctax):
@@ -297,6 +304,8 @@ class prepare_data:
         columns = [str(2020 + i) for i in range(0, 90, 10)]
                                                    
         self.sparse_cubicroot_paths = pd.DataFrame(path, columns=columns)
+        
+        self.sparse_cubicroot_paths.method = 'capped cubicroot'
                 
         return self.sparse_cubicroot_paths        
         
@@ -321,7 +330,9 @@ class prepare_data:
         columns = [str(2020 + i) for i in range(0, 90, 10)]
                                                    
         self.sparse_cubic_paths = pd.DataFrame(path, columns=columns)
-                
+        
+        self.sparse_cubic_paths.method = 'capped cubic'
+        
         return self.sparse_cubic_paths 
 
     def sparse_linear(self, max_ctax):
@@ -340,7 +351,9 @@ class prepare_data:
         columns = [str(2020 + i) for i in range(0, 90, 10)]
                                                    
         self.sparse_ctax_paths = pd.DataFrame(path, columns=columns)
-        self.sparse_ctax_paths = self.sparse_ctax_paths.iloc[1:]        
+        self.sparse_ctax_paths = self.sparse_ctax_paths.iloc[1:]    
+        
+        self.sparse_ctax_paths.method = 'capped linear'
                 
         return self.sparse_ctax_paths
     
@@ -354,6 +367,8 @@ class prepare_data:
         
         for year in self.years:
             self.scaled_random_paths.drop(self.scaled_random_paths.loc[self.scaled_random_paths[year] >= max_ctax].index, inplace=True)
+        
+        self.scaled_random_paths.method = 'scaled random'
         
         return self.scaled_random_paths
     

@@ -74,7 +74,7 @@ def find_path(reductions, path, timerstep):
     # amount of columns is year - 2020 / 5 (5 year timesteps) 
     count_columns = int((reductions.year - 2020) / timerstep)
              
-    columns = [i*timerstep + 2020 for i in range(count_columns + 1)]
+    columns = [str(i*timerstep + 2020) for i in range(count_columns + 1)]
         
     for index in reductions.index.values:
         num = len(columns)

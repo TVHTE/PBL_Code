@@ -2,8 +2,11 @@
 # coding: utf-8
 
 import pandas as pd
+pd.options.mode.chained_assignment = None  # default='warn'
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+
 from scipy.optimize import minimize
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
@@ -31,7 +34,7 @@ class CtaxRedEmulator:
     carbon price path. 
     """   
     def __init__(self, df_lin, df_train, test_size):
-        
+                
         self.lin_path = np.asarray(df_lin.drop(['reduction'], axis = 1))
         self.lin_reduction = np.asarray(df_lin['reduction'])
         
@@ -39,7 +42,7 @@ class CtaxRedEmulator:
         self.train_reduction = np.asarray(df_train['reduction'])
 
         self.df_combined_lin = df_lin        
-        self.df_combined_train = df_train.sort_values([df_train.year])
+        self.df_combined_train = df_train.sort_values(str(df_train.year))
                 
         self.weights = pd.DataFrame()
         
@@ -68,15 +71,11 @@ class CtaxRedEmulator:
         
         # for some reason, some values are not exactly rounded
         self.train_path[:, -1] = np.round(self.train_path[:, -1])
-        
-        # get lin paths based on final ctax
-        self.lin_train = [self.lin_path[self.lin_path[:, -1] == path[-1]] for path in self.train_path]   
+        self.lin_train = [self.lin_path[self.lin_path[:, -1] == self.find_nearest(self.lin_path[:, -1], path[-1])] for path in self.train_path]   
         self.lin_train = np.vstack(self.lin_train)
         self.lin_train = self.lin_train[self.lin_train[:, -1].argsort()]
         self.train_path = self.train_path[self.train_path[:, -1].argsort()]
         
-        print(self.lin_train)
-                        
         delta_cs = self.lin_train - self.train_path
         final_ctax = self.lin_train[:, -1]
         delta_c_norm = delta_cs / final_ctax[:, None]
@@ -87,7 +86,7 @@ class CtaxRedEmulator:
         for index in range(0, 200 + stepsize, stepsize):
                         
             stepsize_ctax = index * 20
-                        
+                                    
             delta_c_step = [ctax['delta_c'] for ctax in delta_c_dict if ctax['final ctax'] <= stepsize_ctax and ctax['final ctax'] >= stepsize_ctax - (stepsize * 20)] 
                         
             # get number of weights wanted
@@ -141,8 +140,18 @@ class CtaxRedEmulator:
         calc_diff = sum(abs(train_reductions[i] - (lin_reductions[i] + x.dot(delta_c_slice[i]))) 
                         for i in range(len(train_reductions))) 
         
-        return calc_diff
+        print(len(train_reductions))
         
+        return calc_diff
+     
+    @staticmethod
+    def find_nearest(array, value):
+        
+        array = np.asarray(array)
+        idx = (np.abs(array - value)).argmin()
+        
+        return array[idx]    
+    
     def test_ctax_paths(self):
         """
         here we use the calculated weights to determine the reduction for a
@@ -193,11 +202,11 @@ class CtaxRedEmulator:
         """    
         self.method = 'multivariate linear regression'        
 
-        lin_regr_mod = LinearRegression()
+        self.lin_regr_mod = LinearRegression()
         
-        lin_regr_mod.fit(self.X_train, self.y_train)
+        self.lin_regr_mod.fit(self.X_train, self.y_train)
         
-        pred = lin_regr_mod.predict(self.X_test)
+        pred = self.lin_regr_mod.predict(self.X_test)
         
         return pred
 
@@ -306,10 +315,10 @@ class CtaxRedEmulator:
             "gamma": [1e-6, 1e-5, 1e-4]
             }
         
-        grid = GridSearchCV(SVR(), parameters, cv=5, verbose=1, n_jobs=-1)
-        grid.fit(self.X_train, self.y_train)
-        print('best params: ', grid.best_params_)
-        pred = grid.predict(self.X_test)
+        self.grid_svm = GridSearchCV(SVR(), parameters, cv=5, verbose=1, n_jobs=-1)
+        self.grid_svm.fit(self.X_train, self.y_train)
+        print('best params: ', self.grid_svm.best_params_)
+        pred = self.grid_svm.predict(self.X_test)
         
         return pred
     
@@ -362,16 +371,109 @@ class CtaxRedEmulator:
         
         print('\033[1m' + 'method: ' + '\033[0m', self.method, '\n', 'RMSE: ', test_set_rmse, '\n', 'R-squared: ', test_set_r2)
         
-        fig, ax = plt.subplots()
-        ax.plot(sorted_pred, label='predicted')
-        ax.plot(sorted_y_test, label='true value')
-        ax.plot(abs(sorted_pred - sorted_y_test), label='difference')
-        ax.plot([i*0 for i in range(len(sorted_pred))], '--', color='red', linewidth=0.8)
-        ax.set_ylabel('reduction [%]')
-        ax.set_xlabel('# test value')
-        ax.grid()
-        ax.legend()
-        ax.set_title(self.method)
-        
-        return fig
+#        fig, ax = plt.subplots()
+#        ax.plot(sorted_pred, label='predicted')
+#        ax.plot(sorted_y_test, label='true value')
+#        ax.plot(abs(sorted_pred - sorted_y_test), label='difference')
+#        ax.plot([i*0 for i in range(len(sorted_pred))], '--', color='red', linewidth=0.8)
+#        ax.set_ylabel('reduction [%]')
+#        ax.set_xlabel('# test value')
+#        ax.grid()
+#        ax.legend()
+#        ax.set_title(self.method)
+#        
+#        return fig
     
+    def scatter_and_mac(self, pred):
+        """
+        scatterplot with on x-axes true reduction and yaxes emulated reduction and a MAC curve 
+        """       
+        sorted_y_test = np.sort(self.y_test)         
+        sorted_pred = np.sort(pred)
+        
+        final_ctax = [x_test[-1] for x_test in self.X_test]
+    
+        p1 = max(max(sorted_y_test), max(sorted_pred))
+        p2 = min(min(sorted_y_test), min(sorted_pred))
+        
+        fig, ax = plt.subplots(1,2, figsize=(10,4))
+        ax[0].scatter(sorted_y_test, sorted_pred, c='crimson', s=10)
+        ax[0].plot([p1, p2], [p1, p2], 'b--')
+        ax[0].set_ylabel('Predicted reduction [%]')
+        ax[0].set_xlabel('True reduction [%]')
+        ax[0].grid()
+        ax[0].set_xlim([p2-5, p1+5])
+
+        ax[1].scatter(pred, final_ctax, label='predicted', s=5)
+        ax[1].scatter(self.y_test, final_ctax, label='true', s=5)
+        ax[1].set_ylabel('Final ctax [USD/tCO2]')
+        ax[1].set_xlabel('Reduction [%]')
+        ax[1].legend()
+        ax[1].grid()
+
+    def calc_miti_costs(self, method, region, step_ctax, emissions, baseline, data_for_emulator):
+        """
+        scale ctax path
+        construct MAC
+        calculate area under MAC
+        """    
+        xaxes = data_for_emulator.columns[:-1]
+        ctax_path = data_for_emulator.iloc[np.random.randint(0, high=1200)].drop(['reduction'])
+        ctax_path = np.asarray(ctax_path)
+        final_ctax = ctax_path.max()
+        norm_ctax = ctax_path / final_ctax
+        ctaxes_for_scale = [i for i in range(step_ctax, int(final_ctax) + step_ctax, step_ctax)]
+        
+#        print(norm_ctax, final_ctax, ctaxes_for_scale)
+                
+        scaled_ctaxes = []
+        
+        for ctax in ctaxes_for_scale:
+            scaled_ctaxes.append(norm_ctax * ctax)
+            
+        scaled_ctaxes = np.asarray(scaled_ctaxes)
+        scaled_ctaxes = np.vstack(scaled_ctaxes)
+        mask = np.all(np.isnan(scaled_ctaxes), axis=1)
+        scaled_ctaxes = scaled_ctaxes[~mask]
+        
+        for scaled_ctax in scaled_ctaxes:
+            plt.plot(xaxes, scaled_ctax)
+        
+        # now use emulator
+        emu_reductions = self.lin_regr_mod.predict(scaled_ctaxes)
+        
+        if self.year != 2100:
+            self.year = self.year + 1
+        
+        baseline = float(baseline.loc[baseline.region == self.region][self.year].values)
+#        abs_emission = np.array(emissions.loc[emissions.region == self.region][self.year].values).astype(float)
+        abs_emissions = [(emu_reduction/100) * baseline for emu_reduction in emu_reductions]
+        prices = ctaxes_for_scale 
+        
+        costs = np.trapz(prices, x=abs_emissions) * 0.001  # kg to tonnes
+        
+        print('costs : ', costs)
+        
+        # calculate mitigation costs
+#        costs = np.trapz(ctax_paths[str(year)].values, x=world_emissions) * -0.001 # 0.001 is for kg to tonnes
+
+    def subplot_results(self, list_of_preds):
+        """
+        plot all tested fits in a figure with subplots
+        """
+        plt.figure(1, figsize=(100, 60), dpi=180)
+        
+        for index, pred in enumerate(list_of_preds):
+    
+            rows = int(math.ceil(len(list_of_preds)/2))
+            plt.subplot(rows,2,index + 1)
+            pred.T.plot(legend=False, ax=plt.gca(), sharex='year', sharey='ctax [USD]', title=self.method, grid=True,
+                       figsize=(10,15), ylabel='ctax [USD]', xlabel='year')
+                
+        
+        
+    
+        
+        
+        
+        
