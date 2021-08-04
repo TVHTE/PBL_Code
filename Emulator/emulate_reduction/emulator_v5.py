@@ -34,17 +34,27 @@ class CtaxRedEmulator:
     This class will create a model which finds the reduction that comes with a certain 
     carbon price path. 
     """   
-    def __init__(self, df_lin, df_train, test_size):
+    def __init__(self, year, region, df_lin, df_train, test_size):
+        
+        self.year = year
+        self.region = region
+        self.columns = df_lin.columns
+        self.pred = pd.DataFrame()
         
         self.lin_path = np.asarray(df_lin.drop(['reduction'], axis = 1))
         self.lin_reduction = np.asarray(df_lin['reduction'])
-                
+         
+        df_train = df_train.drop_duplicates()
+        
         self.train_path = np.asarray(df_train.drop(['reduction'], axis = 1))
         self.train_reduction = np.asarray(df_train['reduction'])
-
-        self.df_combined_lin = df_lin        
-        self.df_combined_train = df_train.sort_values(str(df_train.year)).reset_index(drop=True)
+        
+        self.train_path
                 
+        self.df_combined_lin = df_lin        
+        self.df_combined_train = df_train.sort_values(str(year)).reset_index(drop=True)
+#        self.df_combined_train = df_train
+        
         self.weights = pd.DataFrame()
         
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.train_path, self.train_reduction,
@@ -56,10 +66,6 @@ class CtaxRedEmulator:
         
         # kan ook zo
 #        train, validate, test = np.split(df.sample(frac=1), [int(.6*len(df)), int(.8*len(df))])
-        
-        self.year = df_train.year
-        self.region = df_train.region
-        self.columns = df_lin.columns
         
     def train_ctax_path(self, stepsize, number_of_weights):
         """
@@ -73,68 +79,51 @@ class CtaxRedEmulator:
         
         # for some reason, some values are not exactly rounded
         self.train_path[:, -1] = np.round(self.train_path[:, -1])
-        self.lin_train = [self.lin_path[self.lin_path[:, -1] == self.find_nearest(self.lin_path[:, -1], path[-1])] for path in self.train_path]   
-#        self.lin_train = [item for sublist in self.lin_train for item in sublist]
-        self.lin_train = np.concatenate(self.lin_train, axis=0)
-#        self.lin_train = self.lin_train[self.lin_train[:, -1].argsort()]
-#        self.train_path = self.train_path[self.train_path[:, -1].argsort()]
+        self.lin_train = np.asarray([self.lin_path[self.lin_path[:, -1] == self.find_nearest(self.lin_path[:, -1], path[-1])][0] for path in self.train_path])   
+        self.lin_train = self.lin_train[self.lin_train[:, -1].argsort()]
+        self.train_path = self.train_path[self.train_path[:, -1].argsort()]
         self.lin_train = self.lin_train[:len(self.train_path)]
-        
-        print(len(self.train_path))
-        
+                
         delta_cs = self.lin_train - self.train_path
         final_ctax = self.lin_train[:, -1]
         delta_c_norm = delta_cs / final_ctax[:, None]
         delta_c_norm = np.nan_to_num(delta_c_norm)  # for first two rows
+        self.delta_c_df = pd.DataFrame(delta_c_norm, columns=self.columns[:-1])
         delta_c_dict = [{'delta_c': delta_c_norm[i], 'final ctax': final_ctax[i]} for i in range(len(delta_c_norm))]
         
         self.lin_train_df = pd.DataFrame(self.lin_train, columns=self.columns[:-1])
         self.train_path_df = pd.DataFrame(self.train_path, columns=self.columns[:-1])
-                           
+        self.train_path_df
+        
+        self.all_lin = pd.merge(self.lin_train_df.round(decimals=1), self.df_combined_lin.round(decimals=1), how='inner')
+        self.all_lin = self.all_lin[:len(self.lin_train_df)]
+                
         # stepsize is number of paths used to calculate the weights 20 is the dollar step used in TIMER                         
         for index in range(0, 200 + stepsize, stepsize):
                         
             stepsize_ctax = index * 20
-            delta_c_step = [ctax['delta_c'] for ctax in delta_c_dict if ctax['final ctax'] <= stepsize_ctax and ctax['final ctax'] >= stepsize_ctax - (stepsize * 20)] 
-            
-            # get number of weights wanted
-            self.count_weights = int(len(delta_c_step[0]) / number_of_weights)             
-            delta_c_slice = [np.mean(delta_c[1:].reshape(-1, self.count_weights), axis=1) for delta_c in delta_c_step]
-            
+            delta_c_step = [ctax['delta_c'] for ctax in delta_c_dict if ctax['final ctax'] <= stepsize_ctax and ctax['final ctax'] >= stepsize_ctax - (stepsize * 20)]       
             year = str(self.year)
-            
-            lin_reduction_step = self.df_combined_lin[(self.df_combined_lin[year] <= stepsize_ctax) &
-                                                      (self.df_combined_lin[year] >= stepsize_ctax - (stepsize * 20))]     
-            
-            indices_lin = self.lin_train_df[(self.lin_train_df[year] <= stepsize_ctax) &
-                                         (self.lin_train_df[year] >= stepsize_ctax - (stepsize * 20))]
-            
+         
             indices_train = self.train_path_df[(self.train_path_df[year] <= stepsize_ctax) &
                                          (self.train_path_df[year] >= stepsize_ctax - (stepsize * 20))]
+
+            train_reduction_step = self.df_combined_train.iloc[indices_train.index.values]
+            lin_reduction_step = self.all_lin.iloc[indices_train.index.values]
             
-            print(len(indices_train), len(indices_lin), len(delta_c_step))
-            
-            common_cols = indices_lin.columns.tolist()            
-#            lin_reduction_step = pd.merge(indices_lin, self.df_combined_lin.round(decimals=1), on=common_cols, how='inner')
-#            train_reduction_step = pd.merge(indices_train, self.df_combined_train.round(decimals=1), on=common_cols, how='inner')   
-            train_reduction_step = self.df_combined_train[(self.df_combined_train[year] <= stepsize_ctax) &
-                                                          (self.df_combined_train[year] >= stepsize_ctax - (stepsize * 20))]    
-                        
-#            print(lin_reduction_step, len(lin_reduction_step), train_reduction_step, len(train_reduction_step))
+            delta_c_step = self.delta_c_df.iloc[indices_train.index.values]
+            self.count_weights = int(len(delta_c_step.iloc[0]) / number_of_weights)             
+            delta_c_slice = [np.mean(delta_c[1:].reshape(-1, self.count_weights), axis=1) for delta_c in delta_c_step.values] 
+           
             train_reduction_step[year] = train_reduction_step[year].round(0)
             lin_reduction_step[year] = lin_reduction_step[year].round(0)
 
-            lin_reduction_step = pd.merge(lin_reduction_step, train_reduction_step, on=year)
-            lin_reduction_step = lin_reduction_step[['reduction_x']].values
-            train_reduction_step = train_reduction_step[['reduction']].values
-#            lin_reduction_step = lin_reduction_step['reduction'].values
-#            train_reduction_step = train_reduction_step['reduction'].values
-#            print(len(delta_c_slice), len(lin_reduction_step), len(train_reduction_step))
-
+            lin_reduction_step = lin_reduction_step['reduction'].values
+            train_reduction_step = train_reduction_step['reduction'].values
+            
             lin_reduction_step = lin_reduction_step.reshape((len(lin_reduction_step),1))
             train_reduction_step = train_reduction_step.reshape((len(train_reduction_step),1))
             
-            print(train_reduction_step.shape, lin_reduction_step.shape)
             # set initial values to 0
             x0 = [i*0 for i in delta_c_slice[0]]
                         
@@ -166,7 +155,7 @@ class CtaxRedEmulator:
         """
         calc_diff = sum(abs(train_reductions[i] - (lin_reductions[i] + x.dot(delta_c_slice[i]))) 
                         for i in range(len(train_reductions))) 
-                
+          
         return calc_diff
      
     @staticmethod
@@ -174,7 +163,7 @@ class CtaxRedEmulator:
         
         array = np.asarray(array)
         idx = (np.abs(array - value)).argmin()
-        
+                
         return array[idx]    
     
     def test_ctax_paths(self):
@@ -186,11 +175,11 @@ class CtaxRedEmulator:
         
         output: final reduction, calculated with the weights
         """
-        # for multiple test_paths at once kan dus ook volgens Kaj
+        # for multiple test_paths at once        
         self.X_test[:,-1] = np.round(self.X_test[:,-1])
-        lin_test_paths = np.asarray([self.lin_path[self.lin_path[:, -1] == path[-1]] for path in self.X_test])  # get linear paths
-        lin_test_paths = np.vstack(lin_test_paths)
-                        
+               
+        lin_test_paths = np.asarray([self.lin_path[self.lin_path[:, -1] == self.find_nearest(self.lin_path[:, -1], path[-1])][0] for path in self.X_test]) # get linear paths
+                    
         delta_cs = lin_test_paths - self.X_test 
         final_ctax = lin_test_paths[:, -1]
         delta_c_norm = delta_cs / final_ctax[:, None]
@@ -206,32 +195,25 @@ class CtaxRedEmulator:
         b = weights_df.drop(['ctax'], axis=1).values   
         
         # calculate the reduction
-        test_red = [self.y_test[i] - (delta_c_slice[i] @ b[i]) for i in range(len(self.y_test))]                        
-        test_red = pd.DataFrame(test_red, columns=['test reduction'])
-        test_red['final ctax'] = self.X_test[:, -1]
-        test_red = test_red.sort_values(by=['final ctax'])
-        test_red = test_red.reset_index(drop=True)
-        real_red = pd.DataFrame()
+        test_red = [self.y_test[i] - (delta_c_slice[i] @ b[i]) for i in range(len(self.y_test))] 
         
-        real_red['real reduction'] = self.df_combined_train.loc[self.df_combined_train[str(self.year)].isin(self.X_test[:, -1])]['reduction'].reset_index(drop=True)
-        real_red['final ctax'] = self.df_combined_train.loc[self.df_combined_train[str(self.year)].isin(self.X_test[:, -1])][str(self.year)].reset_index(drop=True)
+        self.v1_pred = test_red
         
-        final_tested_reduction = test_red.merge(real_red)
-        final_tested_reduction.plot(y=['real reduction', 'test reduction'], x=1, grid=True, ylabel='reduction [%]')
-        
-        return final_tested_reduction
+        return test_red
     
     def train_ctax_MLR(self):
         """
         Multivariate Linear Regression using sklearn
         """    
-        self.method = 'multivariate linear regression'        
+        self.method = 'Multivariate linear regression'        
 
-        self.lin_regr_mod = LinearRegression()
+        self.mlr = LinearRegression()
         
-        self.lin_regr_mod.fit(self.X_train, self.y_train)
+        self.mlr.fit(self.X_train, self.y_train)
         
-        pred = self.lin_regr_mod.predict(self.X_test)
+        pred = self.mlr.predict(self.X_test)
+        
+        self.pred['MLR'] = pred
         
         return pred
 
@@ -241,17 +223,19 @@ class CtaxRedEmulator:
         
         using sklearn
         """
-        self.method = 'polynomial regression'        
+        self.method = 'Polynomial regression'        
                     
         poly = PolynomialFeatures(degree=degree)
         x_poly = poly.fit_transform(self.X_train)
         x_poly_test = poly.fit_transform(self.X_test)
         
-        log_reg_mod = LinearRegression()
+        self.pr = LinearRegression()
         
-        log_reg_mod.fit(x_poly, self.y_train)
+        self.pr.fit(x_poly, self.y_train)
         
-        pred = log_reg_mod.predict(x_poly_test)
+        pred = self.pr.predict(x_poly_test)
+        
+        self.pred['PR'] = pred
         
         return pred
 
@@ -259,13 +243,15 @@ class CtaxRedEmulator:
         """
         Ridge regression
         """
-        self.method = 'ridge regression'        
+        self.method = 'Ridge regression'        
 
-        ridge_regr_mod = Ridge(alpha=alpha)
+        self.ridge = Ridge(alpha=alpha)
         
-        ridge_regr_mod.fit(self.X_train, self.y_train)
+        self.ridge.fit(self.X_train, self.y_train)
         
-        pred = ridge_regr_mod.predict(self.X_test)
+        pred = self.ridge.predict(self.X_test)
+        
+        self.pred['Ridge'] = pred
         
         return pred
     
@@ -273,13 +259,15 @@ class CtaxRedEmulator:
         """
         Lasso regression
         """
-        self.method = 'lasso regression'        
+        self.method = 'Lasso regression'        
 
-        ridge_regr_mod = Lasso(alpha=alpha)
+        self.lasso = Lasso(alpha=alpha)
         
-        ridge_regr_mod.fit(self.X_train, self.y_train)
+        self.lasso.fit(self.X_train, self.y_train)
         
-        pred = ridge_regr_mod.predict(self.X_test)
+        pred = self.lasso.predict(self.X_test)
+        
+        self.pred['Lasso'] = pred
         
         return pred
             
@@ -289,11 +277,11 @@ class CtaxRedEmulator:
         """
         
         # bootstrap methods, dataset opsplitsen zodat je ook test met je testsets
-        self.method = 'regression tree'
+        self.method = 'Regression tree'
         
-        clf = tree.DecisionTreeRegressor(random_state=0, max_depth=max_depth)
+        self.tree = tree.DecisionTreeRegressor(random_state=0, max_depth=max_depth)
         
-        clf.fit(self.X_train, self.y_train)
+        self.tree.fit(self.X_train, self.y_train)
         
 #        tree.plot_tree(clf)
         
@@ -301,30 +289,33 @@ class CtaxRedEmulator:
 #        graph = graphviz.Source(dot_data)
 #        graph.render('ctax')
         
+        pred = self.tree.predict(self.X_test)
         
-        pred = clf.predict(self.X_test)
+        self.pred['Tree'] = pred
         
         return pred
     
     def train_ctax_forest(self, max_depth):
         """
-        Regression trees
+        Random forest
         """
         
         # bootstrap methods, dataset opsplitsen zodat je ook test met je testsets
-        self.method = 'regression forest'
+        self.method = 'Regression forest'
                 
         parameters = { 
                 'n_estimators': [100, 200, 300],
                 'max_features': ['auto', 'sqrt', 'log2']
                 }   
         
-        grid = GridSearchCV(RandomForestRegressor(), parameters, cv=5, verbose=1, n_jobs=-1)
+        self.forest = GridSearchCV(RandomForestRegressor(), parameters, cv=5, verbose=1, n_jobs=-1)
         
-        grid.fit(self.X_train, self.y_train)
-        print('best params: ', grid.best_params_)
+        self.forest.fit(self.X_train, self.y_train)
+        print('best params: ', self.forest_grid.best_params_)
 
-        pred = grid.predict(self.X_test) 
+        pred = self.forest_grid.predict(self.X_test) 
+        
+        self.pred['Forest'] = pred
                 
         return pred
     
@@ -340,10 +331,12 @@ class CtaxRedEmulator:
             "gamma": [1e-6, 1e-5, 1e-4]
             }
         
-        self.grid_svm = GridSearchCV(SVR(), parameters, cv=5, verbose=1, n_jobs=-1)
-        self.grid_svm.fit(self.X_train, self.y_train)
-        print('best params: ', self.grid_svm.best_params_)
-        pred = self.grid_svm.predict(self.X_test)
+        self.svm = GridSearchCV(SVR(), parameters, cv=5, verbose=1, n_jobs=-1)
+        self.svm.fit(self.X_train, self.y_train)
+        print('best params: ', self.svm.best_params_)
+        pred = self.svm.predict(self.X_test)
+        
+        self.pred['SVM'] = pred
         
         return pred
     
@@ -360,6 +353,8 @@ class CtaxRedEmulator:
         grid.fit(self.X_train, self.y_train)
         print('best params: ', grid.best_params_)
         pred = grid.predict(self.X_test)
+        
+        self.pred['MLP'] = pred
         
         return pred
     
@@ -395,19 +390,6 @@ class CtaxRedEmulator:
         test_set_r2 = r2_score(sorted_y_test, sorted_pred)
         
         print('\033[1m' + 'method: ' + '\033[0m', self.method, '\n', 'RMSE: ', test_set_rmse, '\n', 'R-squared: ', test_set_r2)
-        
-#        fig, ax = plt.subplots()
-#        ax.plot(sorted_pred, label='predicted')
-#        ax.plot(sorted_y_test, label='true value')
-#        ax.plot(abs(sorted_pred - sorted_y_test), label='difference')
-#        ax.plot([i*0 for i in range(len(sorted_pred))], '--', color='red', linewidth=0.8)
-#        ax.set_ylabel('reduction [%]')
-#        ax.set_xlabel('# test value')
-#        ax.grid()
-#        ax.legend()
-#        ax.set_title(self.method)
-#        
-#        return fig
     
     def scatter_and_mac(self, pred):
         """
@@ -536,7 +518,7 @@ class CtaxRedEmulator:
         for df in splitted_df:
             paths = df.drop('reduction', axis=1)
 #            reductions = self.lin_regr_mod.predict(df)
-            reductions = self.grid_svm.predict(paths)
+            reductions = self.svm.predict(paths)
             paths['emu reduction'] = reductions
             self.emu_reductions.append(paths)
             abs_emissions = [(reduction/100) * baseline for reduction in reductions]
@@ -547,9 +529,7 @@ class CtaxRedEmulator:
         return self.miti_emu
     
     def plot_timer_vs_emu(self):
-                
-        print(self.emu_reductions[10], '\n', self.splitted[10])
-        
+                        
         p1 = max(max(self.miti_timer), max(self.miti_emu))
         p2 = min(min(self.miti_timer), min(self.miti_emu))
         
@@ -563,6 +543,7 @@ class CtaxRedEmulator:
         plt.ylabel('emulated costs (predicted) [USD]')
         plt.xlabel('TIMER costs (true) [USD]')
         plt.plot([p1, p2], [p1, p2], 'b--')
+        plt.grid()
     
     @staticmethod    
     def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):

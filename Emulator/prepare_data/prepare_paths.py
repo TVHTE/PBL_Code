@@ -25,7 +25,10 @@ def combine_azure_ctax(year, region, ctax_paths, emissions, baseline):
                         
     abs_emission = np.array(emissions.loc[emissions.region == region][year].values).astype(float)
     baseline = float(baseline.loc[baseline.region == region][year].values)
-            
+    
+    plt.plot(abs_emission)
+    plt.plot([baseline] * len(abs_emission))
+    
     reduction = 100 - (abs_emission / baseline) * 100
     ctax_index = emissions.loc[emissions.region == region]['ctax_index']
     
@@ -60,7 +63,7 @@ def world_MAC_data(year, ctax_paths, emissions, world_baseline):
         
     world_emissions = np.array([emissions.loc[emissions.ctax_index == i][year].sum() for i in emissions.ctax_index.unique()])
         
-    world_reduction = (world_emissions / world_baseline) * 100
+    world_reduction = 100 - (world_emissions / world_baseline) * 100
             
     ctax_index = [ctax for ctax in range(11)]
     combined_world = pd.DataFrame()
@@ -82,6 +85,39 @@ def world_MAC_data(year, ctax_paths, emissions, world_baseline):
     ctax_world.region = 27
     
     return ctax_world
+
+def world_emulator_data(year, ctax_paths, emissions, world_baseline):
+    """
+    combine azure reduction output with ctax paths input
+    based on year and region
+    """
+        
+    world_emissions = np.array([emissions.loc[emissions.ctax_index == i][year].sum() for i in emissions.ctax_index.unique()])
+        
+    world_reduction = 100 - (world_emissions / world_baseline) * 100
+            
+    ctax_index = emissions.loc[emissions.region == 27]['ctax_index']
+    combined_world = pd.DataFrame()
+    combined_world['ctax_index'] = ctax_index
+    combined_world['reduction'] = world_reduction
+    
+    print(ctax_paths.columns[:-1].values)
+    
+    columns = [column for column in ctax_paths.columns[:-1].values if int(column) <= int(year) - 1]
+    
+    ctax_paths.index.name = 'ctax_index'    
+    ctax_world = pd.merge(ctax_paths[columns], combined_world, on=['ctax_index'])
+    ctax_world = ctax_world.drop(['ctax_index'], axis=1)    
+
+    if year != 2100:
+        ctax_world.year = year - 1
+    else:
+        ctax_world.year = year    
+    
+    ctax_world.region = 27
+    
+    return ctax_world
+
 
 def output_costs_timer(t_system_cost, t_system_cost_rel, year, region, ctax_paths, baseline):
     """
@@ -186,22 +222,27 @@ class prepare_data:
         """  
         self.final_ctax = self.values_only.max(axis=1).values
         norm_ctax = self.values_only.values / self.final_ctax[:, None]
+        
+        mask = np.all(np.isnan(norm_ctax), axis=1)
+        norm_ctax = norm_ctax[~mask]
+        
+        for count, ctax in enumerate(norm_ctax):
+            ctax = np.append(ctax, count)
+        
         ctaxes_for_scale = [i for i in range(step_ctax, self.max_ctax + step_ctax, step_ctax)]
                 
         scaled_ctaxes = []
         
         for ctax in ctaxes_for_scale:
             scaled_ctaxes.append(norm_ctax * ctax)
-
+                            
         scaled_ctaxes = np.asarray(scaled_ctaxes)
         scaled_ctaxes = np.vstack(scaled_ctaxes)
-        mask = np.all(np.isnan(scaled_ctaxes), axis=1)
-        scaled_ctaxes = scaled_ctaxes[~mask]
         self.scaled_ctax_paths = pd.DataFrame(scaled_ctaxes, columns=self.years)
         self.scaled_ctax_paths = self.scaled_ctax_paths.drop_duplicates()
-
-        self.scaled_ctax_paths.method = 'scaled IAMC'        
                 
+        self.scaled_ctax_paths.method = 'scaled IAMC'        
+                  
         return self.scaled_ctax_paths
         
     def get_linear(self, max_ctax, step_ctax):
@@ -363,14 +404,46 @@ class prepare_data:
         """
         random_matrix = np.random.rand(len(self.scaled_ctax_paths), len(self.years))
         random_matrix = random_matrix * max_rand
-        self.scaled_random_paths = self.scaled_ctax_paths.multiply(random_matrix)
+        self.random_paths = self.scaled_ctax_paths.multiply(random_matrix)
         
         for year in self.years:
-            self.scaled_random_paths.drop(self.scaled_random_paths.loc[self.scaled_random_paths[year] >= max_ctax].index, inplace=True)
+            self.random_paths.drop(self.random_paths.loc[self.random_paths[year] >= max_ctax].index, inplace=True)
         
-        self.scaled_random_paths.method = 'scaled random'
+        self.random_paths.method = 'random'
         
-        return self.scaled_random_paths
+        return self.random_paths
+    
+    def scaled_random(self, step_ctax):
+        
+        random_for_scaled = self.random_paths[:50].values
+        print(len(random_for_scaled))
+        
+#        random_for_scaled.T.plot(legend = False)
+        scaled_ctaxes = []
+
+        for ctax_path in random_for_scaled:
+            final_ctax = ctax_path.max()
+            norm_ctax = (ctax_path / final_ctax)
+            ctaxes_for_scale = [i for i in range(step_ctax, int(final_ctax) + step_ctax, step_ctax)]
+            
+            for ctax in ctaxes_for_scale:
+                scaled_ctaxes.append(norm_ctax * ctax)
+#            
+        scaled_ctaxes = np.asarray(scaled_ctaxes)
+        scaled_ctaxes = np.vstack(scaled_ctaxes)
+        mask = np.all(np.isnan(scaled_ctaxes), axis=1)
+        scaled_ctaxes = scaled_ctaxes[~mask]
+        scaled_ctaxes = scaled_ctaxes * 4
+        
+        for path in scaled_ctaxes:
+#            print(path)
+            plt.plot(path)
+            
+        print(len(scaled_ctaxes))
+        
+        self.scaled_random = pd.DataFrame(scaled_ctaxes, columns=self.years)
+        
+        return self.scaled_random
     
     def merge_all(self, path, filename):
         """
@@ -383,12 +456,12 @@ class prepare_data:
         self.lin_ctax_paths['type'] = 'linear'
         self.sparse_ctax_paths['type'] = 'capped linear'
         self.scaled_ctax_paths['type'] = 'scaled IAMC'         
-        self.scaled_random_paths['type'] = 'scaled random'
+        self.random_paths['type'] = 'random'
         self.sparse_cubic_paths['type'] = 'capped cubic'
         self.sparse_cubicroot_paths['type'] = 'capped cubicroot'
         
         self.all_for_excel = pd.concat([self.lin_ctax_paths, self.sparse_ctax_paths, self.scaled_ctax_paths,
-                                        self.scaled_random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths])
+                                        self.random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths])
         self.all_for_excel = self.all_for_excel.reset_index(drop=True)
                 
         self.all_for_excel.to_excel(path + filename)
