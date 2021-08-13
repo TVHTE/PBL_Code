@@ -449,8 +449,10 @@ class prepare_data:
         """
         merge all dataframes
         """                
-        self.all_paths = pd.concat([self.lin_ctax_paths, self.sparse_ctax_paths, self.scaled_ctax_paths,
-                                    self.scaled_random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths])
+        self.all_paths = pd.concat([self.lin_ctax_paths, self.cubic_paths, self.cubicroot_paths,
+                                    self.sparse_ctax_paths, self.scaled_ctax_paths,
+                                    self.random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths])
+    
         self.all_paths = self.all_paths.reset_index(drop=True)
         
         self.lin_ctax_paths['type'] = 'linear'
@@ -459,9 +461,14 @@ class prepare_data:
         self.random_paths['type'] = 'random'
         self.sparse_cubic_paths['type'] = 'capped cubic'
         self.sparse_cubicroot_paths['type'] = 'capped cubicroot'
+        self.cubic_paths['type'] = 'cubic'
+        self.cubicroot_paths['type'] = 'cubicroot'
         
-        self.all_for_excel = pd.concat([self.lin_ctax_paths, self.sparse_ctax_paths, self.scaled_ctax_paths,
-                                        self.random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths])
+        self.all_for_excel = pd.concat([self.lin_ctax_paths, self.cubic_paths, self.cubicroot_paths,
+                                        self.sparse_ctax_paths, self.scaled_ctax_paths,
+                                        self.random_paths, self.sparse_cubic_paths, self.sparse_cubicroot_paths,
+                                        ])
+    
         self.all_for_excel = self.all_for_excel.reset_index(drop=True)
                 
         self.all_for_excel.to_excel(path + filename)

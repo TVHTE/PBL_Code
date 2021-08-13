@@ -525,46 +525,6 @@ class CtaxRedEmulator:
         
 #        export_legend(legend)
         plt.show()
-            
-    def check_difference(self):
-        """
-        find where the large differences are
-        """
-        
-        difference_SVM_test = abs(self.pred['SVM'] - self.y_test)
-        difference_SVM_test = difference_SVM_test.loc[difference_SVM_test > 40]
-        X_test_large_difference = self.X_test[difference_SVM_test.index.values]
-        
-        print(difference_SVM_test.index.values)
-
-        xaxes = list(map(int, self.columns[:-1]))
-        plt.figure()
-#        for path in X_test_large_difference:         
-#            plt.plot(xaxes, path)
-#            plt.xlabel('years')
-#            plt.ylabel('ctax')
-#            plt.grid()
-            
-        fig, ax = plt.subplots(1,2, figsize=(10,4))
-        for index, reduction in enumerate(difference_SVM_test):    
-            ax[0].scatter(self.y_test[difference_SVM_test.index.values[index]], reduction, s=10,
-                          label=index)
-        ax[0].set_ylabel('Predicted reduction [%]')
-        ax[0].set_xlabel('True reduction [%]')
-        ax[0].grid()
-        ax[0].legend()
-
-        for index, path in enumerate(X_test_large_difference):         
-            ax[1].plot(xaxes, path, label=index)
-        ax[1].set_ylabel('ctax [USD/tCO2]')
-        ax[1].set_xlabel('year')
-        ax[1].legend()
-        ax[1].grid()
-            
-        print(self.df_train.columns.values)    
-        paths_high_2040 = self.df_train[(self.df_train['2020'] < 50) & (self.df_train['2030'] < 150) & 
-                                        (self.df_train['2040'] < 250)]
-        print(len(paths_high_2040))
         
     def scatter_and_mac(self, pred):
         """
@@ -593,117 +553,8 @@ class CtaxRedEmulator:
         ax[1].set_xlabel('Reduction [%]')
         ax[1].legend()
         ax[1].grid()
-
-    def calc_miti_costs(self, method, region, step_ctax, emissions, baseline, timer_data, colormap=None):
-        """
-        scale ctax path
-        construct MAC
-        calculate area under MAC
-        """    
-        ctax_path = timer_data.iloc[np.random.randint(0, high=900)].drop(['reduction'])
-        ctax_path = np.asarray(ctax_path)
-        max_ctax = ctax_path.max()
-        norm_ctax = ctax_path / max_ctax
-        ctaxes_for_scale = [i for i in range(step_ctax, int(max_ctax) + step_ctax, step_ctax)]
-        
-#        print(norm_ctax, final_ctax, ctaxes_for_scale)
-                        
-        scaled_ctaxes = []
-        
-        for ctax in ctaxes_for_scale:
-            scaled_ctaxes.append(norm_ctax * ctax)
-            
-        scaled_ctaxes = np.asarray(scaled_ctaxes)
-        scaled_ctaxes = np.vstack(scaled_ctaxes)
-        mask = np.all(np.isnan(scaled_ctaxes), axis=1)
-        scaled_ctaxes = scaled_ctaxes[~mask]
-        
-        for scaled_ctax in scaled_ctaxes:
-            plt.plot(timer_data.columns[:-1], scaled_ctax)
-        
-        # now use emulator
-        emu_reductions = self.grid_svm.predict(scaled_ctaxes)
-        
-        if self.year != 2100:
-            miti_year = self.year + 1
-        else:
-            miti_year = self.year
-        
-        baseline = float(baseline.loc[baseline.region == self.region][miti_year].values)
-        abs_emissions = [(emu_reduction/100) * baseline for emu_reduction in emu_reductions]
-        prices = ctaxes_for_scale 
-        
-        costs = np.trapz(prices, x=abs_emissions) * 0.001  # kg to tonnes
-        print('costs : ', '{:e}'.format(costs))
-        
-        cmap = plt.get_cmap(colormap)
-        new_cmap = self.truncate_colormap(cmap, 0.4, 0.8)
-        
-        plt.figure()
-        plt.plot(emu_reductions, prices)
-        plt.grid(True)
-        plt.scatter(emu_reductions, prices, c=emu_reductions, cmap=new_cmap, zorder=10)
-        plt.xlabel('reduction [%]')
-        plt.ylabel('ctax (final value) [USD/tCO2]')
-        plt.title(f'MAC curve for region {timer_data.region} in {timer_data.year}')
-        
-        return costs
-        
-    def calc_miti_timer(self, ctax_paths, timer_data, baseline):
-        
-        df_max = ctax_paths.max(axis=1)
-        norm_df = ctax_paths.divide(df_max, axis=0)
-        norm_df = norm_df.round(decimals=3)
-        indices_paths = norm_df.drop_duplicates(keep='first').index
-        
-        if self.year != 2100:
-            miti_year = self.year + 1
-        else:
-            miti_year = self.year
-        
-        splitted_df = np.array_split(timer_data, indices_paths[1:])
-        baseline = float(baseline.loc[baseline.region == self.region][miti_year].values)        
-        self.miti_timer = []
-                
-        for df in splitted_df:
-            abs_emissions = [(reduction/100) * baseline for reduction in df['reduction']]
-            prices = df[str(self.year)]
-            costs = np.trapz(prices, x=abs_emissions) * 0.001
-            self.miti_timer.append(costs)
-                 
-        return self.miti_timer
-     
-    def calc_miti_emu(self, ctax_paths, timer_data, baseline):
-        
-        df_max = ctax_paths.max(axis=1)
-        norm_df = ctax_paths.divide(df_max, axis=0)
-        norm_df = norm_df.round(decimals=3)
-        indices_paths = norm_df.drop_duplicates(keep='first').index
-        
-        if self.year != 2100:
-            miti_year = self.year + 1
-        else:
-            miti_year = self.year
-        
-        splitted_df = np.array_split(timer_data, indices_paths[1:])
-        self.splitted = splitted_df
-        baseline = float(baseline.loc[baseline.region == self.region][miti_year].values)        
-        self.miti_emu = []
-        self.emu_reductions = []
-                
-        for df in splitted_df:
-            paths = df.drop('reduction', axis=1)
-            reductions = self.svm.predict(paths)
-            paths['emu reduction'] = reductions
-            self.emu_reductions.append(paths)
-            abs_emissions = [(reduction/100) * baseline for reduction in reductions]
-            prices = df[str(self.year)]
-            costs = np.trapz(prices, x=abs_emissions) * 0.001
-            self.miti_emu.append(costs)
-                 
-        return self.miti_emu
     
-    def calc_miti_emu_2(self, baseline, step_ctax):
+    def calc_miti_emu(self, baseline, step_ctax):
                 
         paths_only = self.df_test[self.years].values
         emu_costs = []
@@ -718,44 +569,10 @@ class CtaxRedEmulator:
             emu_costs.append(np.trapz(prices, x=abs_emissions) * 0.001)
         
         self.emu_costs = emu_costs
-#        ctax_path = np.asarray(paths_only)
-#        max_ctax = ctax_path.max()
-#        norm_ctax = ctax_path / max_ctax
-#        print(len(norm_ctax))
-#        ctaxes_for_scale = [i for i in range(step_ctax, int(max_ctax) + step_ctax, step_ctax)]
-#        
-#        print(max_ctax)
-#                        
-#        scaled_ctaxes = []
-#        
-#        for ctax in ctaxes_for_scale:
-#            scaled_ctaxes.append(norm_ctax * ctax)
-#            
-#        scaled_ctaxes = np.asarray(scaled_ctaxes)
-#        scaled_ctaxes = np.concatenate(scaled_ctaxes)
-#        mask = np.all(np.isnan(scaled_ctaxes), axis=1)
-#        scaled_ctaxes = scaled_ctaxes[~mask]
-#        
-#        print(scaled_ctaxes)
-#                
-#        self.miti_emu = []
-#        self.emu_reductions = []
-#                
-#        for df in splitted_df:
-#            paths = df.drop('reduction', axis=1)
-#            print(paths)
-#            reductions = self.mlr.predict(paths)
-##            reductions = self.svm.predict(paths)
-#            paths['emu reduction'] = reductions
-#            self.emu_reductions.append(paths)
-#            abs_emissions = [(reduction/100) * baseline for reduction in reductions]
-#            prices = df[str(self.year)]
-#            costs = np.trapz(prices, x=abs_emissions) * 0.001
-#            self.miti_emu.append(costs)
-#                 
-#        return self.miti_emu
+        
+        plt.plot(emu_costs)
     
-    def plot_timer_vs_emu(self):
+    def plot_fair_vs_emu(self):
                         
         p1 = max(max(self.miti_timer), max(self.miti_emu))
         p2 = min(min(self.miti_timer), min(self.miti_emu))
