@@ -167,7 +167,39 @@ def plot_MAC(emulator_data, label, colormap=None):
     plt.ylabel('ctax (final value) [USD/tCO2]')
     plt.legend()
     plt.title(f'MAC curve for region {emulator_data.region} in {emulator_data.year}')
+
+def scale_ctax(paths, step_ctax):
+    """
+    normalise the ctax paths and scale them accordingly until max ctax
+    """  
+    max_ctaxes = paths.max(axis=1).values
+    norm_ctax = paths / max_ctaxes[:, None]
     
+    mask = np.all(np.isnan(norm_ctax), axis=1)
+    norm_ctax = norm_ctax[~mask]
+    
+    scaled_ctaxes = []
+    
+    for index, max_ctax in enumerate(max_ctaxes):
+        
+        step = int(max_ctax / 20)
+                
+        ctaxes_for_scale = [i for i in range(step_ctax, int(max_ctax), step)]
+                        
+        for ctax in ctaxes_for_scale:
+            scaled_ctaxes.append(norm_ctax.iloc[index] * ctax)
+                        
+    scaled_ctaxes = np.asarray(scaled_ctaxes)
+    scaled_ctaxes = np.vstack(scaled_ctaxes)
+    scaled_ctax_paths = pd.DataFrame(scaled_ctaxes, columns=paths.columns)
+              
+    all_for_excel = scaled_ctax_paths
+    all_for_excel = all_for_excel.reset_index(drop=True)
+            
+    all_for_excel.to_excel('C:/Users/toonv/Documents/PBL/Data/scaled_test_paths_costs.xlsx')        
+    
+    return scaled_ctax_paths
+
 def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
     new_cmap = colors.LinearSegmentedColormap.from_list(
         'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
@@ -213,7 +245,7 @@ class prepare_data:
         self.unique_models = unique_models
             
         self.values_only = filtered.drop(['model stripped', 'Scenario'], axis=1)        
-        
+                
         return filtered, unique_models
     
     def scale_ctax(self, step_ctax):
