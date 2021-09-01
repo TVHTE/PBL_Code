@@ -62,20 +62,20 @@ def world_MAC_data(year, ctax_paths, emissions, world_baseline):
     """
         
     world_emissions = np.array([emissions.loc[emissions.ctax_index == i][year].sum() for i in emissions.ctax_index.unique()])
-        
+     
     world_reduction = 100 - (world_emissions / world_baseline) * 100
             
-    ctax_index = [ctax for ctax in range(11)]
+    ctax_index = [ctax for ctax in range(len(emissions.ctax_index.unique()))]
     combined_world = pd.DataFrame()
     combined_world['ctax_index'] = ctax_index
     combined_world['reduction'] = world_reduction
-        
-    costs = np.trapz(ctax_paths[str(year)].values, x=world_emissions) * -0.001 # 0.001 is for kg to tonnes
-    print('costs: ', '{:e}'.format(costs))
+    
+#    costs = np.trapz(ctax_paths[year].values, x=world_emissions) * -0.001 # 0.001 is for kg to tonnes
+#    print('costs: ', '{:e}'.format(costs))
     
     ctax_paths.index.name = 'ctax_index'    
     ctax_world = pd.merge(ctax_paths, combined_world, on=['ctax_index'])
-    ctax_world = ctax_world.drop(['ctax_index'], axis=1)    
+#    ctax_world = ctax_world.drop(['ctax_index'], axis=1)    
 
     if year != 2100:
         ctax_world.year = year - 1
@@ -103,7 +103,10 @@ def world_emulator_data(year, ctax_paths, emissions, world_baseline):
     
     print(ctax_paths.columns[:-1].values)
     
-    columns = [column for column in ctax_paths.columns[:-1].values if int(column) <= int(year) - 1]
+    if year != 2100:
+        columns = [column for column in ctax_paths.columns[:-1].values if int(column) <= int(year) - 1]
+    if year == 2100:
+        columns = [column for column in ctax_paths.columns[:-1].values if int(column) <= int(year)]
     
     ctax_paths.index.name = 'ctax_index'    
     ctax_world = pd.merge(ctax_paths[columns], combined_world, on=['ctax_index'])
@@ -147,13 +150,11 @@ def output_costs_timer(t_system_cost, t_system_cost_rel, year, region, ctax_path
     
     return variables_combined
 
-def plot_MAC(emulator_data, label, colormap=None):
+def plot_MAC(emulator_data, year, label, colormap=None):
     """
     plot MAC curves
-    """
-    year = emulator_data.year
-        
-    price = emulator_data[str(year)]
+    """        
+    price = emulator_data[year]
         
     reduction = emulator_data.reduction
     
@@ -166,38 +167,43 @@ def plot_MAC(emulator_data, label, colormap=None):
     plt.xlabel('reduction [%]')
     plt.ylabel('ctax (final value) [USD/tCO2]')
     plt.legend()
-    plt.title(f'MAC curve for region {emulator_data.region} in {emulator_data.year}')
+    plt.title(f'Mondial MAC curve in {year}')
 
-def scale_ctax(paths, step_ctax):
+def scale_ctax(paths, end_ctax):
     """
     normalise the ctax paths and scale them accordingly until max ctax
     """  
     max_ctaxes = paths.max(axis=1).values
     norm_ctax = paths / max_ctaxes[:, None]
-    
+    final_ctaxes = norm_ctax.iloc[:, -1]
+        
     mask = np.all(np.isnan(norm_ctax), axis=1)
     norm_ctax = norm_ctax[~mask]
     
     scaled_ctaxes = []
-    
-    for index, max_ctax in enumerate(max_ctaxes):
+    number_scaled = []
+    count_paths = []
+    for index, final_ctax in enumerate(final_ctaxes):
         
-        step = int(max_ctax / 20)
+        step = int(end_ctax / 20)
+                                
+        ctaxes_for_scale = [i for i in range(0, int(end_ctax/final_ctax) + step, step)]
+        count_paths.append(len(ctaxes_for_scale))
+        number_scaled.append([index + 1] * (len(ctaxes_for_scale)))
                 
-        ctaxes_for_scale = [i for i in range(step_ctax, int(max_ctax), step)]
-                        
         for ctax in ctaxes_for_scale:
             scaled_ctaxes.append(norm_ctax.iloc[index] * ctax)
-                        
+    
+    print(sum(count_paths))
+    flat_number = [item for sublist in number_scaled for item in sublist] 
     scaled_ctaxes = np.asarray(scaled_ctaxes)
     scaled_ctaxes = np.vstack(scaled_ctaxes)
     scaled_ctax_paths = pd.DataFrame(scaled_ctaxes, columns=paths.columns)
-              
+    scaled_ctax_paths['which_path'] = flat_number   
     all_for_excel = scaled_ctax_paths
     all_for_excel = all_for_excel.reset_index(drop=True)
             
     all_for_excel.to_excel('C:/Users/toonv/Documents/PBL/Data/scaled_test_paths_costs.xlsx')        
-    
     return scaled_ctax_paths
 
 def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
@@ -261,7 +267,7 @@ class prepare_data:
         for count, ctax in enumerate(norm_ctax):
             ctax = np.append(ctax, count)
         
-        ctaxes_for_scale = [i for i in range(step_ctax, self.max_ctax + step_ctax, step_ctax)]
+        ctaxes_for_scale = [i for i in range(0, self.max_ctax + step_ctax, step_ctax)]
                 
         scaled_ctaxes = []
         
@@ -341,11 +347,11 @@ class prepare_data:
         ctaxes = range(0, max_ctax+40, 40)
         
         for ctax in ctaxes:
-            a = ctax/((num - 1)**(1/3))
+            a = ctax/((num - 1)**(1/2))
             path =[]
             
             for step in range(0, num): 
-                price = a * (step**(1/3))               
+                price = a * (step**(1/2))               
                 path.append(price)
                 
             paths.append(path)
@@ -456,7 +462,7 @@ class prepare_data:
         for ctax_path in random_for_scaled:
             final_ctax = ctax_path.max()
             norm_ctax = (ctax_path / final_ctax)
-            ctaxes_for_scale = [i for i in range(step_ctax, int(final_ctax) + step_ctax, step_ctax)]
+            ctaxes_for_scale = [i for i in range(0, int(final_ctax) + step_ctax, step_ctax)]
             
             for ctax in ctaxes_for_scale:
                 scaled_ctaxes.append(norm_ctax * ctax)

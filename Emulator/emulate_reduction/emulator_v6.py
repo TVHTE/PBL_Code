@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import matplotlib.cm as cm
+import matplotlib.pylab as pl
 import math
 import pylab
 
@@ -525,7 +526,7 @@ class CtaxRedEmulator:
         
 #        export_legend(legend)
         plt.show()
-        
+
     def scatter_and_mac(self, pred):
         """
         scatterplot with on x-axes true reduction and yaxes emulated reduction and a MAC curve 
@@ -554,24 +555,141 @@ class CtaxRedEmulator:
         ax[1].legend()
         ax[1].grid()
     
-    def calc_miti_emu(self, baseline, step_ctax):
-                
-        paths_only = self.df_test[self.years].values
+    def calc_miti_emu(self, ctax_paths, baseline, step_ctax):
+        
+#        paths_only = self.df_test[self.years].values  #when working with test values from inputted data
+        ctax_paths.columns = [str(col) for col in ctax_paths.columns]
+        ctax_paths = ctax_paths[self.years]
+        paths_only = ctax_paths.values  #when using independent paths
         emu_costs = []
         
         for path in paths_only:
             norm_ctax = path / path.max()
-            ctaxes_for_scale = [i for i in range(step_ctax, int(path.max()) + step_ctax, step_ctax)]
+            step = int(path.max() / 20)
+            ctaxes_for_scale = [i for i in range(step_ctax, int(path.max()), step)]
             paths_for_mac = [norm_ctax * scaled_ctax for scaled_ctax in ctaxes_for_scale]
-            reductions = self.mlr.predict(paths_for_mac)
+            reductions = self.svm.predict(paths_for_mac)
             abs_emissions = [(reduction/100) * baseline for reduction in reductions]
             prices = ctaxes_for_scale
             emu_costs.append(np.trapz(prices, x=abs_emissions) * 0.001)
         
         self.emu_costs = emu_costs
-        
-        plt.plot(emu_costs)
+                
+        return emu_costs
     
+    def TIMER_vs_emu(self, costcheck_paths, costcheck_TIMER, baseline, costcheck_FAIR):
+        
+        costcheck_FAIR = costcheck_FAIR.loc[:2000]*100
+        
+        labels={1:'IAMC_1',
+                2:'IAMC_2',
+                3:'IAMC_3',
+                4:'IAMC_4',
+                5:'IAMC_5',
+                6:'XTREEM_1',
+                7:'XTREEM_2',
+                8:'Cubic',
+                9:'Cubic root',
+                10:'linear',
+                11:'Quadratic',
+                12:'Square root'}
+        
+                        
+        n = 13
+        c = pl.cm.jet(np.linspace(0,1,n))
+                
+        for path in costcheck_TIMER.which_path.unique():            
+            plt.plot(costcheck_paths.iloc[path - 1], c=c[path], label=labels[path])
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid()
+        plt.xlabel('year')
+        plt.ylabel('ctax [USD/tCO2]')
+        
+        reductions = []
+        count_paths = []
+        # EMULATE REDUCTIONS UNTIL 2000
+        for index in range(len(costcheck_paths)):
+            path = costcheck_paths.iloc[index]
+            norm_ctax = path / path.max()  #normalise
+            step = int(path.max() / 20)
+            final_ctax = norm_ctax.iloc[-1]
+            step = int(2000 / 20)
+            ctaxes_for_scale = [i for i in range(0, int(2000/final_ctax) + step, step)]  #scale
+            count_paths.append(len(ctaxes_for_scale))
+            paths_for_mac = [norm_ctax * scaled_ctax for scaled_ctax in ctaxes_for_scale]
+            reductions.append(self.svm.predict(paths_for_mac))  #emulate reductions
+         
+        flat_reductions = [item for sublist in reductions for item in sublist]
+    
+        emu_abs_emissions = [(reduction/100) * baseline for reduction in flat_reductions]  
+        TIMER_abs_emissions = [(reduction/100) * baseline for reduction in costcheck_TIMER['reduction']]  
+                
+        costcheck_TIMER['emu_reductions'] = flat_reductions
+        costcheck_TIMER['emu_abs_emissions'] = emu_abs_emissions
+        costcheck_TIMER['TIMER_abs_emissions'] = TIMER_abs_emissions
+
+        
+        grid_fig_x = 4
+        grid_fig_y = math.ceil(len(costcheck_TIMER.which_path.unique()) / grid_fig_x)
+        fig = plt.figure(figsize=(12,14))
+        fig.text(0.5, 0.08, 'reduction [%]', ha='center')
+        fig.text(0.07, 0.5, 'ctax [USD/tCO2]', va='center', rotation='vertical')
+        fig.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=None, hspace=0.3)
+        
+        for path_index in costcheck_TIMER.which_path.unique():
+                                              
+            ax = plt.subplot(grid_fig_x, grid_fig_y, path_index)
+
+            # EMULATED
+            ax.plot(costcheck_TIMER[costcheck_TIMER.which_path == path_index]['emu_reductions'],
+                    costcheck_TIMER[costcheck_TIMER.which_path == path_index][self.year], c=c[path_index], 
+                    linestyle='-', zorder=10, label=f'Emulated_{path_index}')
+            
+            # TIMER
+            ax.plot(costcheck_TIMER[costcheck_TIMER.which_path == path_index]['reduction'],
+                    costcheck_TIMER[costcheck_TIMER.which_path == path_index][self.year], c='black', 
+                    linestyle=':', label=f'TIMER_{path_index}')
+            
+            # FAIR
+            ax.plot(costcheck_FAIR.iloc[:, path_index - 1],
+                    costcheck_FAIR.index, c=c[path_index], 
+                    linestyle='--', label=f'FAIR_{path_index}')
+            
+            label=labels[path_index]            
+            ax.title.set_text(label)
+            ax.grid()    
+            
+            handles, labels_leg = ax.get_legend_handles_labels()
+            
+        fig.legend(handles, ['Emulated', 'TIMER', 'FAIR'], loc='lower center', ncol=3, bbox_to_anchor=(0.5,0.04))
+        
+        # calculate costs
+        TIMER_costs = []
+        emu_costs = []
+        
+        for index in costcheck_TIMER.which_path.unique():
+            emu_abs_emissions = costcheck_TIMER[costcheck_TIMER.which_path == index]['emu_abs_emissions']
+            TIMER_abs_emissions = costcheck_TIMER[costcheck_TIMER.which_path == index]['TIMER_abs_emissions']
+            price = costcheck_TIMER[costcheck_TIMER.which_path == index][self.year]                  
+            emu_costs.append(np.trapz(price, x=emu_abs_emissions) * 0.001)
+            TIMER_costs.append(np.trapz(price, x=TIMER_abs_emissions) * 0.001)
+                            
+        FAIR_abs_emissions = (costcheck_FAIR / 100) * baseline
+        FAIR_costs = []
+        
+        for column in FAIR_abs_emissions.columns:
+            FAIR_costs.append(np.trapz(costcheck_FAIR.index.values, x=FAIR_abs_emissions[column]) * 0.001)
+        
+        costs = [FAIR_costs, emu_costs, TIMER_costs]
+        
+        total_costs = pd.DataFrame(costs, columns=range(1,13,1))
+        total_costs['Model'] = ['FAIR', 'Emulated', 'TIMER']
+        total_costs = total_costs.set_index('Model', drop=True)
+        total_costs.to_clipboard()
+        print(total_costs)
+        
+        return costcheck_TIMER
+        
     def plot_fair_vs_emu(self):
                         
         p1 = max(max(self.miti_timer), max(self.miti_emu))
